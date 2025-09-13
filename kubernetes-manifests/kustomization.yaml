@@ -17,6 +17,7 @@ kind: Kustomization
 resources:
  - adservice.yaml
  - cartservice.yaml
+ - chatbotservice.yaml
  - checkoutservice.yaml
  - currencyservice.yaml
  - emailservice.yaml

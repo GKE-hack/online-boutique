@@ -450,50 +450,87 @@ func (fe *frontendServer) getProductByID(w http.ResponseWriter, r *http.Request)
 
 func (fe *frontendServer) chatBotHandler(w http.ResponseWriter, r *http.Request) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
-	type Response struct {
+	
+	type ChatRequest struct {
+		Message string   `json:"message"`
+		History []string `json:"history,omitempty"`
+		Image   string   `json:"image,omitempty"`
+	}
+
+	type ChatResponse struct {
+		Success                  bool     `json:"success"`
+		Response                 string   `json:"response"`
+		RecommendedProducts      []string `json:"recommended_products"`
+		TotalProductsConsidered  int      `json:"total_products_considered"`
+	}
+
+	type FrontendResponse struct {
 		Message string `json:"message"`
 	}
 
-	type LLMResponse struct {
-		Content string         `json:"content"`
-		Details map[string]any `json:"details"`
+	// Parse the incoming request
+	var req ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to parse request body"), http.StatusBadRequest)
+		return
 	}
 
-	var response LLMResponse
+	// Prepare request for chatbot service
+	chatbotURL := "http://" + fe.chatbotSvcAddr + "/chat"
+	reqBody, err := json.Marshal(map[string]interface{}{
+		"message": req.Message,
+		"history": req.History,
+	})
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to marshal request"), http.StatusInternalServerError)
+		return
+	}
 
-	url := "http://" + fe.shoppingAssistantSvcAddr
-	req, err := http.NewRequest(http.MethodPost, url, r.Body)
+	// Make request to chatbot service
+	httpReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, chatbotURL, strings.NewReader(string(reqBody)))
 	if err != nil {
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create request"), http.StatusInternalServerError)
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	res, err := http.DefaultClient.Do(req)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	res, err := client.Do(httpReq)
 	if err != nil {
-		renderHTTPError(log, r, w, errors.Wrap(err, "failed to send request"), http.StatusInternalServerError)
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to send request to chatbot service"), http.StatusInternalServerError)
 		return
 	}
+	defer res.Body.Close()
 
+	// Read response from chatbot service
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to read response"), http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Printf("%+v\n", body)
-	fmt.Printf("%+v\n", res)
-
-	err = json.Unmarshal(body, &response)
-	if err != nil {
-		renderHTTPError(log, r, w, errors.Wrap(err, "failed to unmarshal body"), http.StatusInternalServerError)
+	// Parse chatbot service response
+	var chatbotResponse ChatResponse
+	if err := json.Unmarshal(body, &chatbotResponse); err != nil {
+		log.WithField("response_body", string(body)).Error("failed to unmarshal chatbot response")
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to unmarshal chatbot response"), http.StatusInternalServerError)
 		return
 	}
 
-	// respond with the same message
-	json.NewEncoder(w).Encode(Response{Message: response.Content})
+	// Log the interaction for monitoring
+	log.WithFields(logrus.Fields{
+		"user_message":              req.Message,
+		"bot_response_length":       len(chatbotResponse.Response),
+		"recommended_products":      chatbotResponse.RecommendedProducts,
+		"total_products_considered": chatbotResponse.TotalProductsConsidered,
+	}).Info("chatbot interaction")
 
-	w.WriteHeader(http.StatusOK)
+	// Return response in the format expected by the frontend
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(FrontendResponse{Message: chatbotResponse.Response}); err != nil {
+		log.Error("failed to encode response:", err)
+	}
 }
 
 func (fe *frontendServer) setCurrencyHandler(w http.ResponseWriter, r *http.Request) {
