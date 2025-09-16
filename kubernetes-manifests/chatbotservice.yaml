@@ -121,4 +121,4 @@ kind: ConfigMap
 metadata:
   name: chatbot-config
 data:
-  project_id: "your-project-id"  # Replace with actual project ID 
+  project_id: "gke-dev-471716"  # Replace with your Google Cloud project ID 

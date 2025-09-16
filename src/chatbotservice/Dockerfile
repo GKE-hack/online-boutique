@@ -25,18 +25,18 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better layer caching
-COPY requirements.txt .
+COPY src/chatbotservice/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy proto files and generate protobuf
-COPY ../../protos/ /protos/
-COPY genproto.sh .
+COPY protos/ /protos/
+COPY src/chatbotservice/genproto.sh .
 RUN chmod +x genproto.sh && ./genproto.sh
 
 # Copy application code
-COPY . .
+COPY src/chatbotservice/ .
 
 # Create non-root user for security
 RUN groupadd -r chatbot && useradd -r -g chatbot chatbot

@@ -16,10 +16,11 @@
 import os
 import logging
 import json
+import traceback
+import sys
 from concurrent import futures
 from typing import List, Dict, Any
 import grpc
-from grpc_health.v1 import health_pb2_grpc, health_pb2
 import vertexai
 from vertexai.generative_models import GenerativeModel
 from flask import Flask, request, jsonify
@@ -135,17 +136,34 @@ class ChatbotService:
         self.project_id = project_id
         self.location = location
         
-        # Initialize Vertex AI
-        vertexai.init(project=project_id, location=location)
-        
-        # Initialize Gemini 2.0 Flash model
-        self.model = GenerativeModel("gemini-2.0-flash-exp")
-        
-        # Initialize product catalog client
-        catalog_addr = os.getenv('PRODUCT_CATALOG_SERVICE_ADDR', 'productcatalogservice:3550')
-        self.catalog_client = ProductCatalogClient(catalog_addr)
-        
-        logger.info("Chatbot service initialized successfully")
+        try:
+            logger.info(f"Initializing Vertex AI with project_id='{project_id}', location='{location}'")
+            
+            # Check environment variables for debugging
+            logger.info(f"Environment variables:")
+            logger.info(f"  GOOGLE_APPLICATION_CREDENTIALS: {os.getenv('GOOGLE_APPLICATION_CREDENTIALS', 'Not set')}")
+            logger.info(f"  GOOGLE_CLOUD_PROJECT: {os.getenv('GOOGLE_CLOUD_PROJECT', 'Not set')}")
+            
+            # Initialize Vertex AI
+            vertexai.init(project=project_id, location=location)
+            logger.info("Vertex AI initialized successfully")
+            
+            # Initialize Gemini 2.0 Flash model
+            logger.info("Initializing Gemini 2.0 Flash model...")
+            self.model = GenerativeModel("gemini-2.0-flash")
+            logger.info("Gemini model initialized successfully")
+            
+            # Initialize product catalog client
+            catalog_addr = os.getenv('PRODUCT_CATALOG_SERVICE_ADDR', 'productcatalogservice:3550')
+            logger.info(f"Connecting to product catalog at: {catalog_addr}")
+            self.catalog_client = ProductCatalogClient(catalog_addr)
+            
+            logger.info("Chatbot service initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize ChatbotService: {str(e)}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            raise
     
     def format_price(self, price_usd: Dict[str, Any]) -> str:
         """Format price from protobuf format to readable string"""
@@ -211,7 +229,11 @@ Please provide a helpful, friendly response. If the customer is asking about spe
 If you recommend specific products, include their product IDs in square brackets like [PRODUCT_ID] at the end of your response."""
 
             # Generate response using Gemini 2.0 Flash
+            logger.info(f"Generating response for message: '{user_message[:100]}...'")
+            logger.debug(f"Using prompt: {prompt[:200]}...")
+            
             response = self.model.generate_content(prompt)
+            logger.info("Response generated successfully")
             
             # Extract recommended product IDs from response
             recommended_products = self._extract_product_ids(response.text, products)
@@ -223,11 +245,24 @@ If you recommend specific products, include their product IDs in square brackets
             }
             
         except Exception as e:
-            logger.error(f"Error generating response: {e}")
+            logger.error(f"Error generating response: {str(e)}")
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            
+            # Include more details in the error response for debugging
+            error_details = {
+                'error_type': type(e).__name__,
+                'error_message': str(e),
+                'project_id': self.project_id,
+                'location': self.location
+            }
+            logger.error(f"Error details: {json.dumps(error_details, indent=2)}")
+            
             return {
-                'response': "I'm sorry, I'm having trouble processing your request right now. Please try again later.",
+                'response': f"I'm sorry, I'm having trouble processing your request. Error: {str(e)}",
                 'recommended_products': [],
-                'total_products_considered': 0
+                'total_products_considered': 0,
+                'error_details': error_details  # Include for debugging
             }
     
     def _extract_search_keywords(self, message: str) -> List[str]:
@@ -262,66 +297,54 @@ If you recommend specific products, include their product IDs in square brackets
                 product_ids.append(product['id'])
         return product_ids
 
-class HealthServicer(health_pb2_grpc.HealthServicer):
-    """Health check service for gRPC"""
-    
-    def Check(self, request, context):
-        return health_pb2.HealthCheckResponse(
-            status=health_pb2.HealthCheckResponse.SERVING
-        )
-    
-    def Watch(self, request, context):
-        return health_pb2.HealthCheckResponse(
-            status=health_pb2.HealthCheckResponse.SERVING
-        )
 
 def create_flask_app(chatbot_service: ChatbotService) -> Flask:
     """Create Flask app for HTTP API"""
     app = Flask(__name__)
     
-    @app.route('/health', methods=['GET'])
-    def health_check():
-        return jsonify({'status': 'healthy'})
-    
     @app.route('/chat', methods=['POST'])
     def chat():
         try:
+            logger.info(f"Received chat request from {request.remote_addr}")
+            logger.debug(f"Request headers: {dict(request.headers)}")
+            
             data = request.get_json()
+            logger.debug(f"Request data: {data}")
+            
             if not data or 'message' not in data:
+                logger.warning("Invalid request: missing message field")
                 return jsonify({'error': 'Message is required'}), 400
             
             user_message = data['message']
             conversation_history = data.get('history', [])
             
+            logger.info(f"Processing message: '{user_message[:100]}...'")
+            
             response = chatbot_service.generate_response(user_message, conversation_history)
+            
+            logger.info("Chat response generated successfully")
             
             return jsonify({
                 'success': True,
                 'response': response['response'],
                 'recommended_products': response['recommended_products'],
-                'total_products_considered': response['total_products_considered']
+                'total_products_considered': response['total_products_considered'],
+                'error_details': response.get('error_details')  # Include error details if present
             })
             
         except Exception as e:
-            logger.error(f"Error in chat endpoint: {e}")
-            return jsonify({'error': 'Internal server error'}), 500
+            logger.error(f"Error in chat endpoint: {str(e)}")
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            
+            return jsonify({
+                'success': False,
+                'error': f'Internal server error: {str(e)}',
+                'error_type': type(e).__name__
+            }), 500
     
     return app
 
-def serve_grpc(port: int = 8080):
-    """Serve gRPC health checks"""
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
-    
-    listen_addr = f'[::]:{port}'
-    server.add_insecure_port(listen_addr)
-    server.start()
-    logger.info(f"gRPC server started on {listen_addr}")
-    
-    try:
-        server.wait_for_termination()
-    except KeyboardInterrupt:
-        server.stop(0)
 
 def main():
     """Main function to start the chatbot service"""
@@ -329,7 +352,6 @@ def main():
     project_id = os.getenv('PROJECT_ID', 'your-project-id')
     location = os.getenv('LOCATION', 'us-central1')
     http_port = int(os.getenv('HTTP_PORT', '8080'))
-    grpc_port = int(os.getenv('GRPC_PORT', '8081'))
     
     # Initialize chatbot service
     chatbot_service = ChatbotService(project_id, location)
@@ -337,14 +359,9 @@ def main():
     # Create Flask app
     app = create_flask_app(chatbot_service)
     
-    # Start gRPC server in a separate thread
-    grpc_thread = threading.Thread(target=serve_grpc, args=(grpc_port,))
-    grpc_thread.daemon = True
-    grpc_thread.start()
-    
     # Start Flask server
     logger.info(f"Starting HTTP server on port {http_port}")
     run_simple('0.0.0.0', http_port, app, use_reloader=False, use_debugger=False)
 
 if __name__ == '__main__':
-    main() 
+    main()
