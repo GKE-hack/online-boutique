@@ -21,9 +21,11 @@ import sys
 from concurrent import futures
 from typing import List, Dict, Any
 import grpc
+from grpc_health.v1 import health_pb2_grpc, health_pb2
 import vertexai
 from vertexai.generative_models import GenerativeModel
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from werkzeug.serving import run_simple
 import threading
 
@@ -158,6 +160,17 @@ class ChatbotService:
             logger.info(f"Connecting to product catalog at: {catalog_addr}")
             self.catalog_client = ProductCatalogClient(catalog_addr)
             
+            # Initialize RAG manager (optional - graceful fallback)
+            try:
+                from rag_manager import VertexRAGManager
+                self.rag_manager = VertexRAGManager(project_id, 'us-east4')
+                logger.info("RAG manager initialized successfully")
+                self.rag_enabled = True
+            except Exception as e:
+                logger.warning(f"RAG manager initialization failed, using fallback: {e}")
+                self.rag_manager = None
+                self.rag_enabled = False
+            
             logger.info("Chatbot service initialized successfully")
             
         except Exception as e:
@@ -186,8 +199,41 @@ class ChatbotService:
         return context
     
     def generate_response(self, user_message: str, conversation_history: List[str] = None) -> Dict[str, Any]:
-        """Generate chatbot response using Gemini 2.0 Flash"""
+        """Generate chatbot response using RAG-enhanced Gemini or fallback"""
         try:
+            # Try RAG-enhanced response first
+            if self.rag_enabled and self.rag_manager:
+                try:
+                    logger.info(f"Generating RAG-enhanced response for: '{user_message[:100]}...'")
+                    
+                    # Create enhanced prompt with conversation history
+                    enhanced_message = user_message
+                    if conversation_history:
+                        history_text = "\n".join(conversation_history[-5:])  # Keep last 5 messages
+                        enhanced_message = f"Conversation history:\n{history_text}\n\nCurrent message: {user_message}"
+                    
+                    # Generate RAG-enhanced response
+                    rag_response = self.rag_manager.generate_response(enhanced_message)
+                    
+                    # Extract product IDs from RAG response (simple extraction)
+                    recommended_products = self._extract_product_ids_from_text(rag_response)
+                    
+                    logger.info(f"RAG-enhanced response: {rag_response}")
+                    
+                    return {
+                        'response': rag_response,
+                        'recommended_products': recommended_products,
+                        'total_products_considered': 'RAG-based',
+                        'rag_enhanced': True
+                    }
+                    
+                except Exception as e:
+                    logger.warning(f"RAG generation failed, falling back to catalog-based: {e}")
+                    # Fall through to catalog-based approach
+            
+            # Fallback: Catalog-based response (original approach)
+            logger.info(f"Generating catalog-based response for: '{user_message[:100]}...'")
+            
             # Determine if we need to search for specific products
             search_keywords = self._extract_search_keywords(user_message)
             
@@ -229,11 +275,8 @@ Please provide a helpful, friendly response. If the customer is asking about spe
 If you recommend specific products, include their product IDs in square brackets like [PRODUCT_ID] at the end of your response."""
 
             # Generate response using Gemini 2.0 Flash
-            logger.info(f"Generating response for message: '{user_message[:100]}...'")
-            logger.debug(f"Using prompt: {prompt[:200]}...")
-            
             response = self.model.generate_content(prompt)
-            logger.info("Response generated successfully")
+            logger.info("Catalog-based response generated successfully")
             
             # Extract recommended product IDs from response
             recommended_products = self._extract_product_ids(response.text, products)
@@ -241,7 +284,8 @@ If you recommend specific products, include their product IDs in square brackets
             return {
                 'response': response.text,
                 'recommended_products': recommended_products,
-                'total_products_considered': len(products)
+                'total_products_considered': len(products),
+                'rag_enhanced': False
             }
             
         except Exception as e:
@@ -296,20 +340,53 @@ If you recommend specific products, include their product IDs in square brackets
             if f"[{product['id']}]" in response_text:
                 product_ids.append(product['id'])
         return product_ids
+    
+    def _extract_product_ids_from_text(self, response_text: str) -> List[str]:
+        """Extract product IDs from RAG response text using pattern matching"""
+        import re
+        # Look for patterns like [PRODUCT_ID] or mentions of known product IDs
+        product_id_pattern = r'\[([A-Z0-9]+)\]'
+        matches = re.findall(product_id_pattern, response_text)
+        
+        # Also look for mentions of known product IDs (common ones from catalog)
+        known_ids = ['OLJCESPC7Z', '66VCHSJNUP', '1YMWWN1N4O', 'L9ECAV7KIM', '2ZYFJ3GM2N', 
+                     '0PUK6V6EV0', 'LS4PSXUNUM', '9SIQT8TOJO', '6E92ZMYYFZ']
+        
+        for product_id in known_ids:
+            if product_id in response_text and product_id not in matches:
+                matches.append(product_id)
+        
+        return matches
 
+class HealthServicer(health_pb2_grpc.HealthServicer):
+    """Health check service for gRPC"""
+    
+    def Check(self, request, context):
+        return health_pb2.HealthCheckResponse(
+            status=health_pb2.HealthCheckResponse.SERVING
+        )
+    
+    def Watch(self, request, context):
+        return health_pb2.HealthCheckResponse(
+            status=health_pb2.HealthCheckResponse.SERVING
+        )
 
 def create_flask_app(chatbot_service: ChatbotService) -> Flask:
     """Create Flask app for HTTP API"""
     app = Flask(__name__)
+    CORS(app)  # Enable CORS for all routes
+    
+    @app.route('/health', methods=['GET'])
+    def health_check():
+        return jsonify({'status': 'healthy'})
     
     @app.route('/chat', methods=['POST'])
+    @app.route('/bot', methods=['POST'])  # Add back for frontend compatibility
     def chat():
         try:
             logger.info(f"Received chat request from {request.remote_addr}")
-            logger.debug(f"Request headers: {dict(request.headers)}")
             
             data = request.get_json()
-            logger.debug(f"Request data: {data}")
             
             if not data or 'message' not in data:
                 logger.warning("Invalid request: missing message field")
@@ -324,13 +401,44 @@ def create_flask_app(chatbot_service: ChatbotService) -> Flask:
             
             logger.info("Chat response generated successfully")
             
-            return jsonify({
+            # Prepare response data with safe serialization
+            total_products = response.get('total_products_considered', 0)
+            # Convert to int if it's a string like "RAG-based", otherwise use the number
+            if isinstance(total_products, str):
+                total_products_int = 1 if total_products else 0  # Use 1 for RAG-based responses
+            else:
+                total_products_int = int(total_products) if total_products else 0
+                
+            response_data = {
                 'success': True,
-                'response': response['response'],
-                'recommended_products': response['recommended_products'],
-                'total_products_considered': response['total_products_considered'],
-                'error_details': response.get('error_details')  # Include error details if present
-            })
+                'response': str(response.get('response', '')),
+                'recommended_products': response.get('recommended_products', []),
+                'total_products_considered': total_products_int,
+                'rag_enhanced': response.get('rag_enhanced', False)
+            }
+            
+            # Add error details if present (for debugging)
+            if response.get('error_details'):
+                response_data['error_details'] = str(response.get('error_details'))
+            
+            logger.info(f"Returning response with {len(response_data.get('recommended_products', []))} recommended products")
+            
+            try:
+                response_obj = jsonify(response_data)
+                logger.info(f"Successfully created JSON response, status: 200")
+                return response_obj
+            except Exception as json_error:
+                logger.error(f"JSON serialization error: {json_error}")
+                logger.error(f"Response data that failed: {response_data}")
+                # Return a safe fallback response
+                return jsonify({
+                    'success': True,
+                    'response': str(response.get('response', 'Response generated but serialization failed')),
+                    'recommended_products': [],
+                    'total_products_considered': 0,
+                    'rag_enhanced': False,
+                    'serialization_error': str(json_error)
+                })
             
         except Exception as e:
             logger.error(f"Error in chat endpoint: {str(e)}")
@@ -345,6 +453,20 @@ def create_flask_app(chatbot_service: ChatbotService) -> Flask:
     
     return app
 
+def serve_grpc(port: int = 8080):
+    """Serve gRPC health checks"""
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
+    
+    listen_addr = f'[::]:{port}'
+    server.add_insecure_port(listen_addr)
+    server.start()
+    logger.info(f"gRPC server started on {listen_addr}")
+    
+    try:
+        server.wait_for_termination()
+    except KeyboardInterrupt:
+        server.stop(0)
 
 def main():
     """Main function to start the chatbot service"""
@@ -352,12 +474,18 @@ def main():
     project_id = os.getenv('PROJECT_ID', 'your-project-id')
     location = os.getenv('LOCATION', 'us-central1')
     http_port = int(os.getenv('HTTP_PORT', '8080'))
+    grpc_port = int(os.getenv('GRPC_PORT', '8081'))
     
     # Initialize chatbot service
     chatbot_service = ChatbotService(project_id, location)
     
     # Create Flask app
     app = create_flask_app(chatbot_service)
+    
+    # Start gRPC server in a separate thread
+    grpc_thread = threading.Thread(target=serve_grpc, args=(grpc_port,))
+    grpc_thread.daemon = True
+    grpc_thread.start()
     
     # Start Flask server
     logger.info(f"Starting HTTP server on port {http_port}")

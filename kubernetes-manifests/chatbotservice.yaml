@@ -121,4 +121,45 @@ kind: ConfigMap
 metadata:
   name: chatbot-config
 data:
-  project_id: "gke-dev-471716"  # Replace with your Google Cloud project ID 
+  project_id: "gke-dev-471716"  # Replace with your Google Cloud project ID
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rag-sync-cronjob
+  labels:
+    app: rag-sync
+spec:
+  # Run every 10 minutes
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: rag-sync
+            image: chatbotservice:v1.0.0-rag
+            imagePullPolicy: Never  # For minikube local images
+            command: ["/bin/sh", "-c"]
+            args:
+            - |
+              echo "Starting RAG sync..."
+              python auto_update_rag.py
+              echo "RAG sync completed"
+            env:
+            - name: PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: chatbot-config
+                  key: project_id
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m" 
