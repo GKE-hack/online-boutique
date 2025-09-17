@@ -2,11 +2,11 @@ import os, base64
 from io import BytesIO
 from PIL import Image
 import google.generativeai as genai
+from dotenv import load_dotenv
+api_key = os.getenv("GEMINI_API_KEY")
 
 # 0) Configure
-genai.configure(api_key="AIzaSyAUix5Lc7A8ytsnq4TLe8LqS0_CcUWJ56g")
-
-
+genai.configure(api_key=api_key)
 def load_image_part(path, mime="image/png"):
     img = Image.open(path).convert("RGB")
     buf = BytesIO()
