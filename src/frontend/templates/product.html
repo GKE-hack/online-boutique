@@ -68,6 +68,73 @@
             </div>
             <button type="submit" class="cymbal-button-primary">Add To Cart</button>
           </form>
+
+          {{ if hasAnyCategory $.product.Item.Categories "accessories" "clothing" "footwear" }}
+          <hr/>
+          <div id="tryon-section" class="mt-3">
+            <h3>Virtual Try-On</h3>
+            <form id="tryon-form" enctype="multipart/form-data" onsubmit="return false;">
+              <input type="hidden" name="product_id" value="{{$.product.Item.Id}}" />
+              <div class="mb-2">
+                <label for="human_image">Upload your photo</label>
+                <input id="human_image" name="human_image" type="file" accept="image/*" required />
+              </div>
+              <button id="tryon-submit" class="cymbal-button-primary" type="button">Try on me</button>
+              <span id="tryon-status" style="margin-left:8px;"></span>
+            </form>
+            <div id="tryon-result" class="mt-3" style="display:none;">
+              <h4>Result</h4>
+              <img id="tryon-image" alt="Try-on result" style="max-width:100%;height:auto;border:1px solid #ddd;"/>
+            </div>
+          </div>
+
+          <script>
+            (function(){
+              const form = document.getElementById('tryon-form');
+              const submitBtn = document.getElementById('tryon-submit');
+              const statusEl = document.getElementById('tryon-status');
+              const resultWrap = document.getElementById('tryon-result');
+              const resultImg = document.getElementById('tryon-image');
+              const section = document.getElementById('tryon-section');
+
+              async function doTryOn() {
+                statusEl.textContent = 'Processing...';
+                submitBtn.disabled = true;
+                try {
+                  const fd = new FormData(form);
+                  const res = await fetch('{{ $.baseUrl }}/tryon', {
+                    method: 'POST',
+                    body: fd
+                  });
+                  if (!res.ok) {
+                    const txt = await res.text();
+                    throw new Error(txt || ('Request failed: ' + res.status));
+                  }
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  resultImg.src = url;
+                  resultWrap.style.display = 'block';
+                  statusEl.textContent = '';
+                } catch (err) {
+                  console.error(err);
+                  statusEl.textContent = 'Error: ' + (err.message || 'failed to try-on');
+                } finally {
+                  submitBtn.disabled = false;
+                }
+              }
+
+              submitBtn && submitBtn.addEventListener('click', doTryOn);
+
+              // Auto-focus this section if tryon=1 is present
+              try {
+                const usp = new URLSearchParams(window.location.search);
+                if (usp.get('tryon') === '1' && section) {
+                  section.scrollIntoView({behavior: 'smooth', block: 'start'});
+                }
+              } catch (e) {}
+            })();
+          </script>
+          {{ end }}
         </div>
       </div>
     </div>
