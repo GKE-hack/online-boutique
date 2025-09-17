@@ -5,7 +5,7 @@ from io import BytesIO
 from typing import Optional, Tuple
 
 from PIL import Image
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response, PlainTextResponse
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -17,7 +17,7 @@ if not api_key:
     raise RuntimeError("GEMINI_API_KEY is not set")
 
 # Configure Gemini
-TRYON_MODEL = os.getenv("TRYON_MODEL", "gemini-1.5-flash")
+TRYON_MODEL = os.getenv("TRYON_MODEL", "gemini-2.5-flash-image-preview")
 genai.configure(api_key=api_key)
 model = genai.GenerativeModel(TRYON_MODEL)
 
@@ -40,36 +40,45 @@ def file_to_image_part(file_bytes: bytes, mime: str = "image/png"):
     img.save(buf, format="PNG")
     return {"mime_type": mime, "data": buf.getvalue()}
 
-PROMPT = (
-    "ROLE: You are a professional virtual try-on compositor.\n"
-    "INPUTS: Image A (person), Image B (product). OUTPUT: one edited image only.\n\n"
-    "GOAL: Place the product from Image B onto the person in Image A so it looks naturally worn/held.\n\n"
-    "HARD CONSTRAINTS (must all be true):\n"
-    "- Edit the minimal region necessary; keep the rest of Image A pixel-accurate.\n"
-    "- Do NOT add or duplicate body parts. Keep exactly two arms and two hands with the same pose and finger count as in Image A.\n"
-    "- Do NOT change the person’s pose, proportions, face, skin tone, hair, clothing (except where the product must attach), or background.\n"
-    "- Render exactly ONE instance of the product. No duplicates, reflections, or floating copies.\n"
-    "- If placement would require inventing new limbs/fingers, instead keep the original limb and partially occlude the product behind it.\n\n"
-    "PLACEMENT POLICY (choose the most plausible anchor automatically):\n"
-    "- Head/face: glasses, hats.\n"
-    "- Torso/upper body: shirts, jackets, necklaces, ties, scarves.\n"
-    "- Wrist/forearm: watches, bracelets, bangles.\n"
-    "- Hand/fingers: rings, gloves.\n"
-    "- Waist/hips: belts, bags with straps.\n"
-    "- Feet: shoes/sneakers.\n"
-    "- Shoulder/back: backpacks, shoulder bags.\n"
-    "Match the person’s perspective and pose; allow natural occlusions by hair, hands, or clothing.\n\n"
-    "RENDERING REQUIREMENTS:\n"
-    "- Match lighting, color balance, shadows, and scale; keep edges clean and anti-aliased.\n"
-    "- Avoid artifacts: no extra limbs/hands/fingers, no warped anatomy, no duplicated sleeves, no ghosting, no text glitches.\n\n"
-    "QUALITY SELF-CHECK before finalizing (must pass all):\n"
-    "1) Exactly two hands and two arms, identical pose to Image A.\n"
-    "2) Face and background unchanged.\n"
-    "3) One product instance only, correctly attached and scaled.\n"
-    "4) Edges/shadows look photographic.\n"
-    "If any check fails, correct it and output the fixed image.\n\n"
-    "Return only the final edited image."
-)
+FASHION_PROMPT = """
+Create a professional e-commerce fashion photo. Take the product from the first image and let the person from the second image wear it. 
+Generate a realistic, full-body shot of the person wearing the product, with the lighting and shadows adjusted to match the environment in a plain background. 
+Ensure the product fits naturally on the person while maintaining photographic quality."""
+
+HOME_DECOR_PROMPT = """
+Create a professional home interior design photo. Take the decor item from the first image and place it naturally in the room setting from the second image.
+Generate a realistic interior shot showing how the decor item enhances the space, with proper lighting, shadows, and perspective and angles.
+Ensure the item fits the room's style and scale appropriately while maintaining photographic quality."""
+
+FURNITURE_PROMPT = """
+Create a professional furniture showcase photo. Take the furniture piece from the first image and place it in the room setting from the second image.
+Generate a realistic interior shot showing the furniture in use, with natural lighting, proper shadows, and realistic proportions and angles.
+Ensure the furniture fits harmoniously with the existing space and maintains the room's aesthetic while looking photorealistic."""
+
+KITCHEN_PROMPT = """
+Create a professional kitchen product photo. Take the kitchen item from the first image and integrate it into the kitchen setting from the second image.
+Generate a realistic kitchen scene showing the product in its natural context, with appropriate lighting, reflections, and shadows and angles.
+Ensure the item looks functional and fits seamlessly into the kitchen environment while maintaining professional photography quality."""
+
+PROMPT_MAP = {
+    "fashion": FASHION_PROMPT,
+    "clothing": FASHION_PROMPT,
+    "accessories": FASHION_PROMPT,
+    "footwear": FASHION_PROMPT,
+    "home": HOME_DECOR_PROMPT,
+    "decor": HOME_DECOR_PROMPT,
+    "furniture": FURNITURE_PROMPT,
+    "kitchen": KITCHEN_PROMPT,
+    "appliances": KITCHEN_PROMPT
+}
+
+def get_prompt_for_category(category: str) -> str:
+    """Get the appropriate prompt based on product category."""
+    category_lower = category.lower()
+    selected_prompt = PROMPT_MAP.get(category_lower, FASHION_PROMPT)
+    print(f"[DEBUG] Received category: '{category_lower}'")
+    print(f"[DEBUG] Selected prompt starts with: '{selected_prompt[:50]}...'")
+    return selected_prompt
 
 GENERATION_CONFIG = {"temperature": 0.4}
 
@@ -80,19 +89,26 @@ def healthz():
     return "ok"
 
 @app.post("/tryon")
-async def tryon(human_image: UploadFile = File(...), product_image: UploadFile = File(...)):
+async def tryon(
+    base_image: UploadFile = File(...), 
+    product_image: UploadFile = File(...),
+    category: str = Form("fashion")
+):
     try:
-        human_bytes = await human_image.read()
+        base_bytes = await base_image.read()
         product_bytes = await product_image.read()
-        if not human_bytes or not product_bytes:
+        if not base_bytes or not product_bytes:
             raise HTTPException(status_code=400, detail="Both images are required")
 
-        person_part = file_to_image_part(human_bytes)
+        person_part = file_to_image_part(base_bytes)
         product_part = file_to_image_part(product_bytes)
+        
+        # Get the appropriate prompt based on category
+        prompt = get_prompt_for_category(category)
 
         try:
             resp = model.generate_content(
-                [PROMPT, person_part, product_part],
+                [prompt, person_part, product_part],
                 generation_config=GENERATION_CONFIG,
                 request_options={"timeout": 180},
             )

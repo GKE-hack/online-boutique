@@ -507,6 +507,7 @@ func (fe *frontendServer) tryOnHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	productID := r.FormValue("product_id")
+	category := r.FormValue("category")
 	if productID == "" {
 		renderHTTPError(log, r, w, errors.New("missing product_id"), http.StatusBadRequest)
 		return
@@ -529,9 +530,9 @@ func (fe *frontendServer) tryOnHandler(w http.ResponseWriter, r *http.Request) {
 	defer pf.Close()
 
 	// Read uploaded human image
-	hf, header, err := r.FormFile("human_image")
+	hf, header, err := r.FormFile("base_image")
 	if err != nil {
-		renderHTTPError(log, r, w, errors.Wrap(err, "missing human_image file"), http.StatusBadRequest)
+		renderHTTPError(log, r, w, errors.Wrap(err, "missing base_image file"), http.StatusBadRequest)
 		return
 	}
 	defer hf.Close()
@@ -550,15 +551,18 @@ func (fe *frontendServer) tryOnHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// human image part
-	hw, err := mw.CreateFormFile("human_image", header.Filename)
+	hw, err := mw.CreateFormFile("base_image", header.Filename)
 	if err != nil {
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create part"), http.StatusInternalServerError)
 		return
 	}
 	if _, err := io.Copy(hw, hf); err != nil {
-		renderHTTPError(log, r, w, errors.Wrap(err, "failed to copy human image"), http.StatusInternalServerError)
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to copy base image"), http.StatusInternalServerError)
 		return
 	}
+
+	// category part
+	mw.WriteField("category", category)
 	mw.Close()
 
 	url := "http://" + fe.tryOnSvcAddr + "/tryon"
