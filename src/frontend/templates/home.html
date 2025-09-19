@@ -52,6 +52,11 @@
             <div>
               <div class="hot-product-card-name">{{ .Item.Name }}</div>
               <div class="hot-product-card-price">{{ renderMoney .Price }}</div>
+              {{ if hasAnyCategory .Item.Categories "accessories" "clothing" "footwear" }}
+              <div class="mt-2">
+                <a class="cymbal-button-primary" href="{{ $.baseUrl }}/product/{{.Item.Id}}?tryon=1">Try on me</a>
+              </div>
+              {{ end }}
             </div>
           </div>
           {{ end }}

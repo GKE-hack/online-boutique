@@ -27,6 +27,7 @@ resources:
  - productcatalogservice.yaml
  - recommendationservice.yaml
  - shippingservice.yaml
+ - tryonservice.yaml
  - generic-mcp-service.yaml
  - peau-agent.yaml
  - video-generation.yaml

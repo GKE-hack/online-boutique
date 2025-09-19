@@ -17,7 +17,7 @@ kind: Config
 metadata:
   name: app
 build:
-  platforms: ["linux/amd64", "linux/arm64"]
+  platforms: ["linux/amd64"]
   artifacts:
   # image tags are relative; to specify an image repo (e.g. GCR), you
   # must provide a "default repo" using one of the methods described
@@ -51,6 +51,8 @@ build:
     context: src/frontend
   - image: adservice
     context: src/adservice
+  - image: tryonservice
+    context: src/tryonservice
   - image: generic_mcp_service
     context: .
     docker:
@@ -65,7 +67,7 @@ build:
     gitCommit: {}
   local:
     useDockerCLI: true
-    useBuildkit: true
+    push: false
 manifests:
   kustomize:
     paths:

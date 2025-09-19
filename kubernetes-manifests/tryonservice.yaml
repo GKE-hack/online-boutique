@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tryonservice
+  labels:
+    app: tryonservice
+spec:
+  selector:
+    matchLabels:
+      app: tryonservice
+  template:
+    metadata:
+      labels:
+        app: tryonservice
+      annotations:
+        sidecar.istio.io/rewriteAppHTTPProbers: "true"
+    spec:
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+      - name: server
+        image: tryonservice
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /_healthz
+            port: 8080
+          initialDelaySeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /_healthz
+            port: 8080
+          initialDelaySeconds: 10
+        env:
+        - name: PORT
+          value: "8080"
+        - name: TRYON_MODEL
+          value: "gemini-2.5-flash-image-preview"
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: tryonservice-secrets
+              key: GEMINI_API_KEY
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tryonservice
+  labels:
+    app: tryonservice
+spec:
+  type: ClusterIP
+  selector:
+    app: tryonservice
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080

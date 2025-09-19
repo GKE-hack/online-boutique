@@ -82,6 +82,8 @@ spec:
             value: "adservice:9555"
           - name: SHOPPING_ASSISTANT_SERVICE_ADDR
             value: "shoppingassistantservice:80"
+          - name: TRY_ON_SERVICE_ADDR
+            value: "tryonservice:8080"
           - name: CHATBOT_SERVICE_ADDR
             value: "chatbotservice:8080"
           - name: PEAU_AGENT_SERVICE_ADDR

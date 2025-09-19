@@ -675,3 +675,20 @@ the rules below could be extracted.
   width: 10px;
   height: 5px;
 }
+
+/* Small inline loader used in Try-On status */
+.loader {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #cfcfcf;
+  border-top-color: #111111;
+  border-radius: 50%;
+  animation: cymbal-spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-left: 8px;
+}
+
+@keyframes cymbal-spin {
+  to { transform: rotate(360deg); }
+}

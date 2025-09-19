@@ -35,6 +35,8 @@ import (
 	pb "github.com/GoogleCloudPlatform/microservices-demo/src/frontend/genproto"
 	"github.com/GoogleCloudPlatform/microservices-demo/src/frontend/money"
 	"github.com/GoogleCloudPlatform/microservices-demo/src/frontend/validator"
+	"mime/multipart"
+	"bytes"
 )
 
 type platformDetails struct {
@@ -50,6 +52,7 @@ var (
 				Funcs(template.FuncMap{
 			"renderMoney":        renderMoney,
 			"renderCurrencyLogo": renderCurrencyLogo,
+			"hasAnyCategory":     hasAnyCategory,
 		}).ParseGlob("templates/*.html"))
 	plat platformDetails
 )
@@ -583,6 +586,105 @@ func (fe *frontendServer) chatBotHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+func (fe *frontendServer) tryOnHandler(w http.ResponseWriter, r *http.Request) {
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+	if err := r.ParseMultipartForm(20 << 20); err != nil { // 20MB
+		renderHTTPError(log, r, w, errors.Wrap(err, "invalid form"), http.StatusBadRequest)
+		return
+	}
+
+	productID := r.FormValue("product_id")
+	category := r.FormValue("category")
+	if productID == "" {
+		renderHTTPError(log, r, w, errors.New("missing product_id"), http.StatusBadRequest)
+		return
+	}
+
+	// Retrieve product to resolve product image path
+	p, err := fe.getProduct(r.Context(), productID)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "could not retrieve product"), http.StatusInternalServerError)
+		return
+	}
+
+	// Open product image from local static directory
+	productPath := "." + p.GetPicture()
+	pf, err := os.Open(productPath)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrapf(err, "failed to open product image: %s", productPath), http.StatusInternalServerError)
+		return
+	}
+	defer pf.Close()
+
+	// Read uploaded human image
+	hf, header, err := r.FormFile("base_image")
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "missing base_image file"), http.StatusBadRequest)
+		return
+	}
+	defer hf.Close()
+
+	// Build multipart payload to try-on service
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	// product image part
+	pw, err := mw.CreateFormFile("product_image", "product"+filepathExtSafe(productPath))
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create part"), http.StatusInternalServerError)
+		return
+	}
+	if _, err := io.Copy(pw, pf); err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to copy product image"), http.StatusInternalServerError)
+		return
+	}
+	// human image part
+	hw, err := mw.CreateFormFile("base_image", header.Filename)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create part"), http.StatusInternalServerError)
+		return
+	}
+	if _, err := io.Copy(hw, hf); err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to copy base image"), http.StatusInternalServerError)
+		return
+	}
+
+	// category part
+	mw.WriteField("category", category)
+	mw.Close()
+
+	url := "http://" + fe.tryOnSvcAddr + "/tryon"
+	req, err := http.NewRequest(http.MethodPost, url, &body)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create request"), http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to call try-on service"), http.StatusBadGateway)
+		return
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(res.Body)
+		renderHTTPError(log, r, w, errors.Errorf("try-on service error: %s", string(b)), res.StatusCode)
+		return
+	}
+
+	// proxy image back to client
+	w.Header().Set("Content-Type", res.Header.Get("Content-Type"))
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, res.Body)
+}
+
+func filepathExtSafe(path string) string {
+	idx := strings.LastIndex(path, ".")
+	if idx == -1 || idx < len(path)-5 { // simple guard
+		return ".png"
+	}
+	return path[idx:]
+}
+
 func (fe *frontendServer) setCurrencyHandler(w http.ResponseWriter, r *http.Request) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	cur := r.FormValue("currency_code")
@@ -624,6 +726,22 @@ func renderHTTPError(log logrus.FieldLogger, r *http.Request, w http.ResponseWri
 	log.WithField("error", err).Error("request error")
 	errMsg := fmt.Sprintf("%+v", err)
 
+	// If client prefers JSON, return structured error
+	accept := r.Header.Get("Accept")
+	if strings.Contains(accept, "application/json") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		// Keep payload simple and predictable for FE
+		payload := map[string]any{
+			"status":       http.StatusText(code),
+			"status_code":  code,
+			"message":      userFacingMessage(code, errMsg),
+			"error":        errMsg,
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+		return
+	}
+
 	w.WriteHeader(code)
 
 	if templateErr := templates.ExecuteTemplate(w, "error", injectCommonTemplateData(r, map[string]interface{}{
@@ -632,6 +750,21 @@ func renderHTTPError(log logrus.FieldLogger, r *http.Request, w http.ResponseWri
 		"status":      http.StatusText(code),
 	})); templateErr != nil {
 		log.Println(templateErr)
+	}
+}
+
+// userFacingMessage maps common error codes to simpler, friendly messages displayed in the FE.
+func userFacingMessage(code int, fallback string) string {
+	switch code {
+	case http.StatusBadRequest:
+		return "Please select an image to upload."
+	case http.StatusRequestEntityTooLarge:
+		return "The selected file is too large. Please choose a smaller image."
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return "Try-on service is temporarily unavailable. Please try again later."
+	default:
+		if fallback != "" { return fallback }
+		return "Something went wrong. Please try again."
 	}
 }
 
@@ -721,6 +854,23 @@ func stringinSlice(slice []string, val string) bool {
 	return false
 }
 
+// hasAnyCategory returns true if any of the target category strings are present in the
+// provided categories slice. Comparison is case-insensitive.
+func hasAnyCategory(categories []string, targets ...string) bool {
+	if len(categories) == 0 || len(targets) == 0 {
+		return false
+	}
+	m := make(map[string]struct{}, len(categories))
+	for _, c := range categories {
+		m[strings.ToLower(c)] = struct{}{}
+	}
+	for _, t := range targets {
+		if _, ok := m[strings.ToLower(t)]; ok {
+			return true
+		}
+	}
+	return false
+}
 // Video Generation Handlers
 
 func (fe *frontendServer) generateAdsHandler(w http.ResponseWriter, r *http.Request) {

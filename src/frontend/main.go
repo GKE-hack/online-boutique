@@ -85,6 +85,7 @@ type frontendServer struct {
 	collectorConn *grpc.ClientConn
 
 	shoppingAssistantSvcAddr string
+	tryOnSvcAddr string
 	chatbotSvcAddr           string
 	peauAgentSvcAddr         string
 	videoGenerationSvcAddr   string
@@ -139,6 +140,7 @@ func main() {
 	mustMapEnv(&svc.shippingSvcAddr, "SHIPPING_SERVICE_ADDR")
 	mustMapEnv(&svc.adSvcAddr, "AD_SERVICE_ADDR")
 	mustMapEnv(&svc.shoppingAssistantSvcAddr, "SHOPPING_ASSISTANT_SERVICE_ADDR")
+	mustMapEnv(&svc.tryOnSvcAddr, "TRY_ON_SERVICE_ADDR")
 	mustMapEnv(&svc.chatbotSvcAddr, "CHATBOT_SERVICE_ADDR")
 	mustMapEnv(&svc.peauAgentSvcAddr, "PEAU_AGENT_SERVICE_ADDR")
 	mustMapEnv(&svc.videoGenerationSvcAddr, "VIDEO_GENERATION_SERVICE_ADDR")
@@ -161,6 +163,7 @@ func main() {
 	r.HandleFunc(baseUrl + "/logout", svc.logoutHandler).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl + "/cart/checkout", svc.placeOrderHandler).Methods(http.MethodPost)
 	r.HandleFunc(baseUrl + "/assistant", svc.assistantHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl + "/tryon", svc.tryOnHandler).Methods(http.MethodPost)
 	r.HandleFunc(baseUrl + "/generate-ads", svc.generateAdsHandler).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl + "/api/products/search", svc.searchProductsForAdsHandler).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl + "/api/generate-video", svc.generateVideoHandler).Methods(http.MethodPost)
