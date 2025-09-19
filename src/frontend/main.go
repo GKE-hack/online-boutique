@@ -86,6 +86,7 @@ type frontendServer struct {
 
 	shoppingAssistantSvcAddr string
 	chatbotSvcAddr           string
+	peauAgentSvcAddr         string
 }
 
 func main() {
@@ -138,6 +139,7 @@ func main() {
 	mustMapEnv(&svc.adSvcAddr, "AD_SERVICE_ADDR")
 	mustMapEnv(&svc.shoppingAssistantSvcAddr, "SHOPPING_ASSISTANT_SERVICE_ADDR")
 	mustMapEnv(&svc.chatbotSvcAddr, "CHATBOT_SERVICE_ADDR")
+	mustMapEnv(&svc.peauAgentSvcAddr, "PEAU_AGENT_SERVICE_ADDR")
 
 	mustConnGRPC(ctx, &svc.currencySvcConn, svc.currencySvcAddr)
 	mustConnGRPC(ctx, &svc.productCatalogSvcConn, svc.productCatalogSvcAddr)

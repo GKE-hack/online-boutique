@@ -1,0 +1,7 @@
+grpcio
+grpcio-tools
+Flask
+mcp
+Flask-Cors
+google-adk
+

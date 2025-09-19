@@ -56,6 +56,49 @@ var (
 
 var validEnvs = []string{"local", "gcp", "azure", "aws", "onprem", "alibaba"}
 
+// trackBehavior sends user behavior events to the PEAU Agent for proactive engagement
+func (fe *frontendServer) trackBehavior(ctx context.Context, userID string, eventType string, productID string) {
+	if fe.peauAgentSvcAddr == "" {
+		return // Skip if PEAU agent not configured
+	}
+
+	event := map[string]interface{}{
+		"user_id": userID,
+		"events": []map[string]interface{}{
+			{
+				"type":       eventType,
+				"product_id": productID,
+				"timestamp":  time.Now().Format(time.RFC3339),
+			},
+		},
+	}
+
+	reqBody, err := json.Marshal(event)
+	if err != nil {
+		return // Skip on marshal error
+	}
+
+	peauURL := "http://" + fe.peauAgentSvcAddr + "/track_behavior"
+	
+	// Send asynchronously to avoid blocking the main request
+	go func() {
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Post(peauURL, "application/json", strings.NewReader(string(reqBody)))
+		if err != nil {
+			// Log error but don't fail the main request
+			log := logrus.WithField("service", "peau-agent")
+			log.WithError(err).Warn("failed to track behavior")
+			return
+		}
+		defer resp.Body.Close()
+		
+		if resp.StatusCode != http.StatusOK {
+			log := logrus.WithField("service", "peau-agent")
+			log.WithField("status", resp.StatusCode).Warn("behavior tracking returned non-200 status")
+		}
+	}()
+}
+
 func (fe *frontendServer) homeHandler(w http.ResponseWriter, r *http.Request) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	log.WithField("currency", currentCurrency(r)).Info("home")
@@ -151,6 +194,9 @@ func (fe *frontendServer) productHandler(w http.ResponseWriter, r *http.Request)
 	log.WithField("id", id).WithField("currency", currentCurrency(r)).
 		Debug("serving product page")
 
+	// Track product view behavior for PEAU Agent
+	fe.trackBehavior(r.Context(), sessionID(r), "product_viewed", id)
+
 	p, err := fe.getProduct(r.Context(), id)
 	if err != nil {
 		renderHTTPError(log, r, w, errors.Wrap(err, "could not retrieve product"), http.StatusInternalServerError)
@@ -232,6 +278,10 @@ func (fe *frontendServer) addToCartHandler(w http.ResponseWriter, r *http.Reques
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to add to cart"), http.StatusInternalServerError)
 		return
 	}
+
+	// Track add to cart behavior for PEAU Agent
+	fe.trackBehavior(r.Context(), sessionID(r), "item_added_to_cart", payload.ProductID)
+
 	w.Header().Set("location", baseUrl + "/cart")
 	w.WriteHeader(http.StatusFound)
 }

@@ -28,6 +28,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.serving import run_simple
 import threading
+import requests # Added for PEAU Agent client
+import time # Added for timestamp for mock behavior events
 
 # Import generated protobuf classes
 import demo_pb2
@@ -40,6 +42,38 @@ logging.basicConfig(
     datefmt='%Y-%m-%dT%H:%M:%S.%fZ'
 )
 logger = logging.getLogger(__name__)
+
+class PEAUAgentClient:
+    """Client for communicating with the Proactive Engagement & Upselling Agent (PEAU Agent) via MCP."""
+
+    def __init__(self, peau_agent_mcp_addr: str):
+        self.peau_agent_mcp_addr = peau_agent_mcp_addr
+        logger.info(f"Initialized PEAU Agent MCP client for {self.peau_agent_mcp_addr}")
+
+    def get_proactive_suggestion(self, user_id: str, behavior_events: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Calls the PEAU Agent's MCP endpoint to get a proactive suggestion."""
+        try:
+            payload = {
+                "user_id": user_id,
+                "behavior_events": behavior_events
+            }
+            # MCP server exposes registered tools via /tools/{tool_name}
+            response = requests.post(
+                f"http://{self.peau_agent_mcp_addr}/tools/get_proactive_suggestion",
+                json=payload
+            )
+            response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
+            return response.json()
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"PEAU Agent MCP server not reachable at {self.peau_agent_mcp_addr}: {e}")
+            return {"suggestion": "", "recommended_product_ids": [], "error": "PEAU Agent unavailable."}
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error calling PEAU Agent MCP: {e}")
+            return {"suggestion": "", "recommended_product_ids": [], "error": f"Error from PEAU Agent: {e}"}
+        except Exception as e:
+            logger.error(f"Unexpected error in PEAUAgentClient: {e}")
+            return {"suggestion": "", "recommended_product_ids": [], "error": f"Unexpected error: {e}"}
+
 
 class ProductCatalogClient:
     """Client for communicating with the Product Catalog Service via gRPC"""
@@ -160,6 +194,11 @@ class ChatbotService:
             logger.info(f"Connecting to product catalog at: {catalog_addr}")
             self.catalog_client = ProductCatalogClient(catalog_addr)
             
+            # Initialize PEAU Agent client
+            peau_agent_mcp_addr = os.getenv('PEAU_AGENT_MCP_ADDR', 'localhost:8081')
+            logger.info(f"Connecting to PEAU Agent MCP at: {peau_agent_mcp_addr}")
+            self.peau_agent_client = PEAUAgentClient(peau_agent_mcp_addr)
+
             # Initialize RAG manager (optional - graceful fallback)
             try:
                 from rag_manager import VertexRAGManager
@@ -278,11 +317,22 @@ If you recommend specific products, include their product IDs in square brackets
             response = self.model.generate_content(prompt)
             logger.info("Catalog-based response generated successfully")
             
-            # Extract recommended product IDs from response
-            recommended_products = self._extract_product_ids(response.text, products)
+            # --- PEAU Agent Integration ---
+            # DISABLED: Mock behavior generation for demo purposes
+            # Real behavior tracking will come from frontend user interactions
+            # When users actually click on products, view them, or add to cart
+            # 
+            # TODO: If needed, ChatBot could still integrate with PEAU Agent 
+            # based on REAL user behavior data passed from the frontend
             
+            final_response_text = response.text
+
+
+            # Extract recommended product IDs from response
+            recommended_products = self._extract_product_ids(final_response_text, products) # Use final_response_text
+
             return {
-                'response': response.text,
+                'response': final_response_text, # Use final_response_text
                 'recommended_products': recommended_products,
                 'total_products_considered': len(products),
                 'rag_enhanced': False

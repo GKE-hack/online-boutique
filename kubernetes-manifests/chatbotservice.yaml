@@ -65,6 +65,8 @@ spec:
           value: "8081"
         - name: DISABLE_PROFILER
           value: "1"
+        - name: PEAU_AGENT_MCP_ADDR
+          value: "peau-agent:8081" # Address of the PEAU Agent MCP server
         readinessProbe:
           httpGet:
             path: /health
