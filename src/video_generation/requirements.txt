@@ -1,0 +1,8 @@
+google-genai==1.38.0
+grpcio
+grpcio-tools
+flask
+flask-cors
+gunicorn
+requests
+Pillow
