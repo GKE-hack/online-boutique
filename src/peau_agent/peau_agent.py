@@ -121,6 +121,10 @@ class PEAUAgent:
         self.app_name = "peau_agent"
         self.user_id = "system"
         self.session_id = "main_session"
+        
+        # In-memory user behavior tracking
+        # Structure: {user_id: {product_id: {"views": count, "last_viewed": timestamp, "added_to_cart": bool}}}
+        self.user_behavior_state = {}
 
         try:
             vertexai.init(project=project_id, location=location)
@@ -153,6 +157,136 @@ class PEAUAgent:
         if result.get("status") == "success" and result.get("products"):
             return result["products"][0]
         return None
+
+    def track_user_behavior(self, user_id: str, events: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Tracks user behavior and returns suggestion only when thresholds are met.
+        
+        Thresholds:
+        - Product viewed 5+ times → "Hesitation" message
+        - Product added to cart → Category-based recommendations
+        
+        Returns:
+        - None if no threshold met
+        - Suggestion dict if threshold triggered
+        """
+        # Initialize user state if not exists
+        if user_id not in self.user_behavior_state:
+            self.user_behavior_state[user_id] = {}
+        
+        user_state = self.user_behavior_state[user_id]
+        
+        for event in events:
+            event_type = event.get("type", "unknown")
+            product_id = event.get("product_id")
+            timestamp = event.get("timestamp")
+            
+            if not product_id:
+                continue
+                
+            # Initialize product state if not exists
+            if product_id not in user_state:
+                user_state[product_id] = {"views": 0, "last_viewed": None, "added_to_cart": False}
+            
+            product_state = user_state[product_id]
+            
+            if event_type == "product_viewed":
+                product_state["views"] += 1
+                product_state["last_viewed"] = timestamp
+                
+                # Check if view threshold is met (5+ views)
+                if product_state["views"] >= 5 and not product_state["added_to_cart"]:
+                    logger.info(f"User {user_id} viewed product {product_id} {product_state['views']} times - triggering hesitation message")
+                    return self._generate_hesitation_message(user_id, product_id)
+                    
+            elif event_type == "item_added_to_cart":
+                product_state["added_to_cart"] = True
+                logger.info(f"User {user_id} added product {product_id} to cart - triggering category recommendations")
+                return self._generate_category_recommendations(user_id, product_id)
+        
+        # No threshold met
+        logger.info(f"User {user_id} behavior tracked, no threshold met yet")
+        return None
+
+    def _generate_hesitation_message(self, user_id: str, product_id: str) -> Dict[str, Any]:
+        """Generates a hesitation message for products viewed multiple times."""
+        product = self._get_product_details(product_id)
+        if not product:
+            return {"suggestion": "We notice you're interested in this product!", "recommended_product_ids": []}
+            
+        product_name = product['name']
+        product_price = product.get('price', 'N/A')
+        product_description = product.get('description', '')
+        categories = ', '.join(product.get('categories', []))
+        
+        prompt = f"""A user has viewed the same product multiple times but hasn't purchased it yet. Generate a FLIRTY and PLAYFUL message with product details:
+
+PRODUCT DETAILS:
+- Product Name: {product_name}
+- Product ID: {product_id}
+- Price: {product_price}
+- Description: {product_description}
+- Categories: {categories}
+
+Create a flirty message that includes:
+1. A flirty opening like:
+   - "This {product_name} misses you 💔"
+   - "Your {product_name} is getting lonely without you 😢"
+   - "Someone's been eyeing this {product_name}... we see you 👀"
+   - "This {product_name} has been waiting for you 💕"
+
+2. Then add the product description and benefits to explain why it's amazing
+
+3. Include the product ID [{product_id}] in the message
+
+Style: Start flirty and playful, then highlight the product's features from the description
+Use emojis and make it feel like the product has feelings
+Be persuasive but fun"""
+
+        return self._execute_suggestion_generation(user_id, prompt)
+
+    def _generate_category_recommendations(self, user_id: str, product_id: str) -> Dict[str, Any]:
+        """Generates category-based recommendations when user adds product to cart."""
+        product = self._get_product_details(product_id)
+        if not product:
+            return {"suggestion": "Thanks for adding that to your cart!", "recommended_product_ids": []}
+            
+        product_name = product['name']
+        product_price = product.get('price', 'N/A')
+        categories = product.get("categories", [])
+        
+        prompt = f"""A user just added a product to their cart. Create a SHORT, enthusiastic message with product recommendations:
+
+PURCHASED PRODUCT:
+- Product Name: {product_name}
+- Product ID: {product_id}
+- Categories: {', '.join(categories)}
+
+USER ACTION: User added "{product_name}" [{product_id}] to their cart.
+
+Create a SHORT message (2-3 sentences max) that:
+1. Celebrates their choice: "Great choice with the {product_name}! 🎉"
+2. Use the product_search_tool with category parameter to find 2-3 related products from categories: {', '.join(categories)}
+3. Suggest complementary items briefly: "You might also love [PRODUCT_ID] and [PRODUCT_ID]!"
+
+Style: Enthusiastic, brief, emoji-friendly
+Keep the whole message under 25 words
+Focus on product IDs from the search tool results"""
+
+        return self._execute_suggestion_generation(user_id, prompt)
+
+    def _execute_suggestion_generation(self, user_id: str, prompt: str) -> Dict[str, Any]:
+        """Helper method to execute AI suggestion generation with the given prompt."""
+        logger.info(f"Generating suggestion for user {user_id}...")
+        try:
+            result = asyncio.run(self._generate_suggestion_async(user_id, prompt))
+            return result
+        except Exception as e:
+            logger.error(f"Error generating suggestion: {e}")
+            return {
+                "suggestion": "Thanks for your interest! Let us know if you need any help.",
+                "recommended_product_ids": []
+            }
 
     def analyze_user_behavior(self, user_id: str, events: List[Dict[str, Any]]) -> str:
         """Analyzes user behavior events and generates a summary for Gemini."""
@@ -196,24 +330,8 @@ class PEAUAgent:
                 "recommended_product_ids": []
             }
 
-    async def _generate_suggestion_async(self, user_id: str, behavior_summary: str) -> Dict[str, Any]:
+    async def _generate_suggestion_async(self, user_id: str, prompt: str) -> Dict[str, Any]:
         """Async method to generate suggestions using ADK pattern."""
-        prompt = f"""Based on this user behavior, provide a helpful and personalized shopping suggestion:
-
-{behavior_summary}
-
-Please analyze the behavior and:
-1. If they viewed products but didn't add to cart, suggest similar or complementary items from the SAME CATEGORIES
-2. If they added items to cart, suggest related products for cross-selling from RELATED CATEGORIES
-3. IMPORTANT: Use the product_search_tool with the 'category' parameter to find products from the same categories as what the user interacted with
-4. If the user viewed/added items from specific categories (e.g., "home & garden", "clothing"), search for other products in those exact categories
-
-STRATEGY: 
-- Extract the categories from the user's behavior above
-- Use product_search_tool(category="category_name") to find similar products
-- Recommend products that match the user's demonstrated interests
-
-Be conversational and helpful. Include product IDs in square brackets [PRODUCT_ID] when recommending specific items."""
 
         try:
             # Use the correct async pattern from ADK example

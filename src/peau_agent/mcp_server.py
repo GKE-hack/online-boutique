@@ -48,14 +48,23 @@ def track_behavior():
         if not user_id or not events:
             return jsonify({"error": "user_id and events are required"}), 400
 
-        behavior_summary = peau_agent_instance.analyze_user_behavior(user_id, events)
-        suggestion_data = peau_agent_instance.generate_proactive_suggestion(user_id, behavior_summary)
+        # Use new threshold-based tracking
+        suggestion_data = peau_agent_instance.track_user_behavior(user_id, events)
 
-        return jsonify({
-            "status": "success",
-            "message": "Behavior tracked and suggestion generated",
-            "suggestion_data": suggestion_data
-        })
+        if suggestion_data:
+            # Threshold met - return suggestion
+            return jsonify({
+                "status": "success",
+                "message": "Behavior threshold met - suggestion generated",
+                "suggestion_data": suggestion_data
+            })
+        else:
+            # No threshold met - just acknowledge tracking
+            return jsonify({
+                "status": "success", 
+                "message": "Behavior tracked - no threshold met yet",
+                "suggestion_data": None
+            })
     except Exception as e:
         logger.error(f"Error in /track_behavior: {e}")
         return jsonify({"error": str(e)}), 500
