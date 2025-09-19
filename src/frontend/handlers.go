@@ -639,6 +639,22 @@ func renderHTTPError(log logrus.FieldLogger, r *http.Request, w http.ResponseWri
 	log.WithField("error", err).Error("request error")
 	errMsg := fmt.Sprintf("%+v", err)
 
+	// If client prefers JSON, return structured error
+	accept := r.Header.Get("Accept")
+	if strings.Contains(accept, "application/json") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		// Keep payload simple and predictable for FE
+		payload := map[string]any{
+			"status":       http.StatusText(code),
+			"status_code":  code,
+			"message":      userFacingMessage(code, errMsg),
+			"error":        errMsg,
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+		return
+	}
+
 	w.WriteHeader(code)
 
 	if templateErr := templates.ExecuteTemplate(w, "error", injectCommonTemplateData(r, map[string]interface{}{
@@ -647,6 +663,21 @@ func renderHTTPError(log logrus.FieldLogger, r *http.Request, w http.ResponseWri
 		"status":      http.StatusText(code),
 	})); templateErr != nil {
 		log.Println(templateErr)
+	}
+}
+
+// userFacingMessage maps common error codes to simpler, friendly messages displayed in the FE.
+func userFacingMessage(code int, fallback string) string {
+	switch code {
+	case http.StatusBadRequest:
+		return "Please select an image to upload."
+	case http.StatusRequestEntityTooLarge:
+		return "The selected file is too large. Please choose a smaller image."
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return "Try-on service is temporarily unavailable. Please try again later."
+	default:
+		if fallback != "" { return fallback }
+		return "Something went wrong. Please try again."
 	}
 }
 

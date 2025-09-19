@@ -182,14 +182,41 @@
                   await new Promise((resolve) => requestAnimationFrame(() => resolve()));
                   submitBtn.disabled = true;
                   try {
+                    // Client-side validation: ensure a file is selected
+                    const fileInput = document.getElementById('base_image');
+                    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+                      statusEl.innerHTML = '';
+                      statusEl.textContent = 'Please select an image to upload.';
+                      return;
+                    }
+
                     const fd = new FormData(form);
                     const res = await fetch('{{ $.baseUrl }}/tryon', {
                       method: 'POST',
+                      headers: { 'Accept': 'application/json' },
                       body: fd
                     });
                     if (!res.ok) {
-                      const txt = await res.text();
-                      throw new Error(txt || ('Request failed: ' + res.status));
+                      let friendly = 'Something went wrong. Please try again.';
+                      // Prefer friendly messages for common cases
+                      if (res.status === 400) {
+                        friendly = 'Please select an image to upload.';
+                      } else if (res.status === 413) {
+                        friendly = 'The selected file is too large. Please choose a smaller image.';
+                      } else if (res.status === 502 || res.status === 503 || res.status === 504) {
+                        friendly = 'Try-on service is temporarily unavailable. Please try again later.';
+                      }
+
+                      try {
+                        const ct = res.headers.get('Content-Type') || '';
+                        if (ct.includes('application/json')) {
+                          const data = await res.json();
+                          const serverMsg = data && (data.message || data.error);
+                          if (serverMsg) friendly = serverMsg;
+                        }
+                      } catch(_) { /* ignore JSON parse issues */ }
+
+                      throw new Error(friendly);
                     }
                     const blob = await res.blob();
                     const url = URL.createObjectURL(blob);
@@ -208,7 +235,7 @@
                   } catch (err) {
                     console.error(err);
                     statusEl.innerHTML = '';
-                    statusEl.textContent = 'Error: ' + (err.message || 'failed to try-on');
+                    statusEl.textContent = (err && err.message) ? err.message : 'Failed to generate try-on image.';
                   } finally {
                     submitBtn.disabled = false;
                   }
