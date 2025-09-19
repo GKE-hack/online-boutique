@@ -1,0 +1,6 @@
+google-adk
+vertexai
+Flask
+requests
+mcp # Added for official MCP library
+Flask-Cors # Added for CORS support

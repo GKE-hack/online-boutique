@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video-generation
+  labels:
+    app: video-generation
+spec:
+  selector:
+    matchLabels:
+      app: video-generation
+  template:
+    metadata:
+      labels:
+        app: video-generation
+    spec:
+      serviceAccountName: default
+      terminationGracePeriodSeconds: 5
+      containers:
+      - name: server
+        image: video_generation
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: PRODUCT_CATALOG_SERVICE_ADDR
+          value: "productcatalogservice:3550"
+        - name: FRONTEND_SERVICE_ADDR
+          value: "frontend:80"
+        - name: GEMINI_API_KEY
+          value: "AIzaSyB9V1o8yj0VoQ_k0eImqovwJ8NRrhups-A" # Replace with your actual API key
+        - name: VEO_MODEL_ID
+          value: "veo-3.0-fast-generate-001"
+        readinessProbe:
+          initialDelaySeconds: 10
+          periodSeconds: 120
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          httpGet:
+            path: /health
+            port: 8080
+        livenessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 600
+          timeoutSeconds: 5
+          failureThreshold: 3
+          httpGet:
+            path: /health
+            port: 8080
+        startupProbe:
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 12
+          httpGet:
+            path: /health
+            port: 8080
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        volumeMounts:
+        - name: video-storage
+          mountPath: /app/videos
+      volumes:
+      - name: video-storage
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: video-generation
+  labels:
+    app: video-generation
+spec:
+  type: ClusterIP
+  selector:
+    app: video-generation
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080

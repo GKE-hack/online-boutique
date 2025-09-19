@@ -31,6 +31,10 @@ build:
     context: src/recommendationservice
   - image: shoppingassistantservice
     context: src/shoppingassistantservice
+  - image: chatbotservice
+    context: .
+    docker:
+      dockerfile: src/chatbotservice/Dockerfile
   - image: shippingservice
     context: src/shippingservice
   - image: checkoutservice
@@ -49,6 +53,16 @@ build:
     context: src/adservice
   - image: tryonservice
     context: src/tryonservice
+  - image: generic_mcp_service
+    context: .
+    docker:
+      dockerfile: src/generic_mcp_service/Dockerfile
+  - image: peau_agent
+    context: src/peau_agent
+  - image: video_generation
+    context: .
+    docker:
+      dockerfile: src/video_generation/Dockerfile
   tagPolicy:
     gitCommit: {}
   local:
@@ -94,28 +108,29 @@ profiles:
   - op: add
     path: /manifests/kustomize/paths/1
     value: kustomize/components/network-policies
----
-apiVersion: skaffold/v3
-kind: Config
-metadata:
-  name: loadgenerator
-requires:
-- configs:
-  - app
-build:
-  platforms: ["linux/amd64"]
-  artifacts:
-  - image: loadgenerator
-    context: src/loadgenerator
-  local:
-    useDockerCLI: true
-    useBuildkit: true
-manifests:
-  rawYaml:
-  - ./kubernetes-manifests/loadgenerator.yaml
-deploy:
-  kubectl: {}
-profiles:
+# DISABLED: LoadGenerator commented out to avoid triggering behavior tracking during development
+# Uncomment when you want to test with simulated load
+# ---
+# apiVersion: skaffold/v3
+# kind: Config
+# metadata:
+#   name: loadgenerator
+# requires:
+# - configs:
+#   - app
+# build:
+#   platforms: ["linux/amd64", "linux/arm64"]
+#   artifacts:
+#   - image: loadgenerator
+#     context: src/loadgenerator
+#   local:
+#     useDockerCLI: true
+#     useBuildkit: true
+# manifests:
+#   rawYaml:
+#   - ./kubernetes-manifests/loadgenerator.yaml
+# deploy:
+#   kubectl: {}
 - name: gcb
   build:
     googleCloudBuild:

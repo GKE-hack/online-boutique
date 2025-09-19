@@ -1,0 +1,392 @@
+{{ define "generate-ads" }}
+{{ template "header" . }}
+
+<main role="main" class="container">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="mb-4">🎬 AI Video Advertisement Generator</h1>
+            <p class="lead">Create high-quality video advertisements for products using AI. Search for a product below and generate an engaging video ad in minutes!</p>
+        </div>
+    </div>
+
+    <!-- Product Search Section -->
+    <div class="row mb-4" id="search-section">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Step 1: Select a Product</h3>
+                </div>
+                <div class="card-body">
+                    <div class="input-group mb-3">
+                        <input type="text" class="form-control" id="product-search" placeholder="Search for products (e.g., camera, t-shirt, sunglasses)">
+                        <div class="input-group-append">
+                            <button class="btn btn-primary" type="button" id="search-btn">Search</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Product Results -->
+                    <div id="product-results" class="row"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video Generation Section -->
+    <div class="row mb-4" id="generation-section" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Step 2: Generate Video Advertisement</h3>
+                </div>
+                <div class="card-body">
+                    <div id="selected-product"></div>
+                    <button class="btn btn-success btn-lg" id="generate-btn">
+                        🎥 Generate Video Advertisement
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Section -->
+    <div class="row mb-4" id="loading-section" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body text-center">
+                    <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+                        <span class="sr-only">Loading...</span>
+                    </div>
+                    <h3>🎬 Generating Your Video Advertisement...</h3>
+                    <p class="lead">This may take a few minutes. Please wait while AI creates your professional video ad.</p>
+                    <div class="progress mb-3">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                    </div>
+                    <p id="status-message">Starting video generation...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video Result Section -->
+    <div class="row mb-4" id="result-section" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Step 3: Review Your Video Advertisement</h3>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-8">
+                            <video id="generated-video" controls style="width: 100%; max-height: 400px;">
+                                Your browser does not support the video tag.
+                            </video>
+                        </div>
+                        <div class="col-md-4">
+                            <h5>Video Details</h5>
+                            <div id="video-details"></div>
+                            
+                            <hr>
+                            
+                            <h5>Approve for Publication?</h5>
+                            <p>Is this video ready to be published as an advertisement?</p>
+                            <div class="btn-group-vertical d-block">
+                                <button class="btn btn-success mb-2" id="approve-btn">
+                                    ✅ Yes, Approve Video
+                                </button>
+                                <button class="btn btn-danger" id="reject-btn">
+                                    ❌ No, Reject Video
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success/Error Messages -->
+    <div id="alert-container"></div>
+</main>
+
+<script>
+let selectedProduct = null;
+let currentJobId = null;
+
+// Search functionality
+document.getElementById('search-btn').addEventListener('click', searchProducts);
+document.getElementById('product-search').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+        searchProducts();
+    }
+});
+
+// Generation functionality
+document.getElementById('generate-btn').addEventListener('click', generateVideo);
+
+// Validation functionality
+document.getElementById('approve-btn').addEventListener('click', () => validateVideo(true));
+document.getElementById('reject-btn').addEventListener('click', () => validateVideo(false));
+
+async function searchProducts() {
+    const query = document.getElementById('product-search').value.trim();
+    const resultsContainer = document.getElementById('product-results');
+    
+    if (!query) {
+        resultsContainer.innerHTML = '<p class="text-muted">Please enter a search term</p>';
+        return;
+    }
+    
+    try {
+        resultsContainer.innerHTML = '<p class="text-muted">Searching...</p>';
+        
+        const response = await fetch(`{{ .baseUrl }}/api/products/search?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+        
+        if (data.products && data.products.length > 0) {
+            displayProducts(data.products);
+        } else {
+            resultsContainer.innerHTML = '<p class="text-muted">No products found. Try a different search term.</p>';
+        }
+    } catch (error) {
+        console.error('Search error:', error);
+        resultsContainer.innerHTML = '<p class="text-danger">Error searching products. Please try again.</p>';
+    }
+}
+
+function displayProducts(products) {
+    const resultsContainer = document.getElementById('product-results');
+    
+    const html = products.map(product => `
+        <div class="col-md-4 mb-3">
+            <div class="card product-card" style="cursor: pointer;" onclick="selectProduct('${product.id}', '${product.name}', '${product.description}', '${product.price}')">
+                <div class="card-body">
+                    <h6 class="card-title">${product.name}</h6>
+                    <p class="card-text small">${product.description.substring(0, 100)}...</p>
+                    <p class="card-text"><strong>${product.price}</strong></p>
+                    <small class="text-muted">${product.categories.join(', ')}</small>
+                </div>
+            </div>
+        </div>
+    `).join('');
+    
+    resultsContainer.innerHTML = html;
+}
+
+function selectProduct(id, name, description, price) {
+    selectedProduct = { id, name, description, price };
+    
+    // Update selected product display
+    document.getElementById('selected-product').innerHTML = `
+        <div class="alert alert-info">
+            <h5>Selected Product:</h5>
+            <strong>${name}</strong> - ${price}<br>
+            <small>${description}</small>
+        </div>
+    `;
+    
+    // Show generation section
+    document.getElementById('generation-section').style.display = 'block';
+    
+    // Highlight selected product
+    document.querySelectorAll('.product-card').forEach(card => {
+        card.classList.remove('border-primary');
+    });
+    event.target.closest('.product-card').classList.add('border-primary');
+}
+
+async function generateVideo() {
+    if (!selectedProduct) {
+        showAlert('Please select a product first', 'warning');
+        return;
+    }
+    
+    try {
+        // Hide other sections and show loading
+        document.getElementById('generation-section').style.display = 'none';
+        document.getElementById('result-section').style.display = 'none';
+        document.getElementById('loading-section').style.display = 'block';
+        
+        // Start generation
+        const response = await fetch('{{ .baseUrl }}/api/generate-video', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                product_id: selectedProduct.id
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.job_id) {
+            currentJobId = data.job_id;
+            pollVideoStatus();
+        } else {
+            throw new Error(data.error || 'Failed to start video generation');
+        }
+    } catch (error) {
+        console.error('Generation error:', error);
+        showAlert('Failed to start video generation: ' + error.message, 'danger');
+        document.getElementById('loading-section').style.display = 'none';
+        document.getElementById('generation-section').style.display = 'block';
+    }
+}
+
+async function pollVideoStatus() {
+    if (!currentJobId) return;
+    
+    try {
+        const response = await fetch(`{{ .baseUrl }}/api/video-status/${currentJobId}`);
+        const data = await response.json();
+        
+        const progressBar = document.querySelector('.progress-bar');
+        const statusMessage = document.getElementById('status-message');
+        
+        if (data.status === 'generating') {
+            progressBar.style.width = '50%';
+            statusMessage.textContent = 'AI is creating your video advertisement...';
+            setTimeout(pollVideoStatus, 20000); // Poll every 20 seconds
+        } else if (data.status === 'completed') {
+            progressBar.style.width = '100%';
+            statusMessage.textContent = 'Video generation completed!';
+            showVideoResult(data);
+        } else if (data.status === 'failed') {
+            throw new Error(data.error || 'Video generation failed');
+        } else {
+            // Still processing
+            setTimeout(pollVideoStatus, 20000);
+        }
+    } catch (error) {
+        console.error('Status check error:', error);
+        showAlert('Error checking video status: ' + error.message, 'danger');
+        document.getElementById('loading-section').style.display = 'none';
+        document.getElementById('generation-section').style.display = 'block';
+    }
+}
+
+function showVideoResult(data) {
+    // Hide loading section
+    document.getElementById('loading-section').style.display = 'none';
+    
+    // Set up video player  
+    const video = document.getElementById('generated-video');
+    video.src = `{{ .baseUrl }}/video/${data.video_filename}`;
+    
+    // Set up video details
+    document.getElementById('video-details').innerHTML = `
+        <p><strong>Product:</strong> ${data.product.name}</p>
+                        <p><strong>Duration:</strong> ~8 seconds</p>
+        <p><strong>Format:</strong> MP4</p>
+        <p><strong>Status:</strong> Ready for review</p>
+    `;
+    
+    // Show result section
+    document.getElementById('result-section').style.display = 'block';
+}
+
+async function validateVideo(approved) {
+    if (!currentJobId) return;
+    
+    try {
+        const response = await fetch('{{ .baseUrl }}/api/validate-video', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                job_id: currentJobId,
+                approved: approved
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (approved) {
+            showAlert('✅ Video approved for publication!', 'success');
+        } else {
+            showAlert('❌ Video rejected. You can generate a new one.', 'info');
+        }
+        
+        // Reset for new generation
+        setTimeout(() => {
+            resetForm();
+        }, 3000);
+        
+    } catch (error) {
+        console.error('Validation error:', error);
+        showAlert('Error validating video: ' + error.message, 'danger');
+    }
+}
+
+function showAlert(message, type) {
+    const alertContainer = document.getElementById('alert-container');
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type} alert-dismissible fade show`;
+    alert.innerHTML = `
+        ${message}
+        <button type="button" class="close" data-dismiss="alert">
+            <span>&times;</span>
+        </button>
+    `;
+    alertContainer.appendChild(alert);
+    
+    // Auto dismiss after 5 seconds
+    setTimeout(() => {
+        alert.classList.remove('show');
+        setTimeout(() => {
+            alert.remove();
+        }, 150);
+    }, 5000);
+}
+
+function resetForm() {
+    selectedProduct = null;
+    currentJobId = null;
+    document.getElementById('product-search').value = '';
+    document.getElementById('product-results').innerHTML = '';
+    document.getElementById('generation-section').style.display = 'none';
+    document.getElementById('loading-section').style.display = 'none';
+    document.getElementById('result-section').style.display = 'none';
+}
+
+// Load all products on page load
+window.addEventListener('load', () => {
+    document.getElementById('product-search').value = '';
+    searchProducts();
+});
+</script>
+
+<style>
+.product-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    transition: all 0.3s ease;
+}
+
+.product-card.border-primary {
+    border-width: 2px !important;
+}
+
+.progress {
+    height: 20px;
+}
+
+#generated-video {
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.card {
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.btn-lg {
+    padding: 12px 24px;
+    font-size: 18px;
+}
+</style>
+
+{{ template "footer" . }}
+{{ end }}

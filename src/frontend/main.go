@@ -86,6 +86,9 @@ type frontendServer struct {
 
 	shoppingAssistantSvcAddr string
 	tryOnSvcAddr string
+	chatbotSvcAddr           string
+	peauAgentSvcAddr         string
+	videoGenerationSvcAddr   string
 }
 
 func main() {
@@ -138,6 +141,9 @@ func main() {
 	mustMapEnv(&svc.adSvcAddr, "AD_SERVICE_ADDR")
 	mustMapEnv(&svc.shoppingAssistantSvcAddr, "SHOPPING_ASSISTANT_SERVICE_ADDR")
 	mustMapEnv(&svc.tryOnSvcAddr, "TRY_ON_SERVICE_ADDR")
+	mustMapEnv(&svc.chatbotSvcAddr, "CHATBOT_SERVICE_ADDR")
+	mustMapEnv(&svc.peauAgentSvcAddr, "PEAU_AGENT_SERVICE_ADDR")
+	mustMapEnv(&svc.videoGenerationSvcAddr, "VIDEO_GENERATION_SERVICE_ADDR")
 
 	mustConnGRPC(ctx, &svc.currencySvcConn, svc.currencySvcAddr)
 	mustConnGRPC(ctx, &svc.productCatalogSvcConn, svc.productCatalogSvcAddr)
@@ -158,6 +164,12 @@ func main() {
 	r.HandleFunc(baseUrl + "/cart/checkout", svc.placeOrderHandler).Methods(http.MethodPost)
 	r.HandleFunc(baseUrl + "/assistant", svc.assistantHandler).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl + "/tryon", svc.tryOnHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl + "/generate-ads", svc.generateAdsHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl + "/api/products/search", svc.searchProductsForAdsHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl + "/api/generate-video", svc.generateVideoHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl + "/api/video-status/{job_id}", svc.videoStatusHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl + "/api/validate-video", svc.validateVideoHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl + "/video/{filename}", svc.serveVideoHandler).Methods(http.MethodGet)
 	r.PathPrefix(baseUrl + "/static/").Handler(http.StripPrefix(baseUrl + "/static/", http.FileServer(http.Dir("./static/"))))
 	r.HandleFunc(baseUrl + "/robots.txt", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "User-agent: *\nDisallow: /") })
 	r.HandleFunc(baseUrl + "/_healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "ok") })
