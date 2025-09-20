@@ -31,6 +31,10 @@ spec:
           value: "AIzaSyB9V1o8yj0VoQ_k0eImqovwJ8NRrhups-A" # Replace with your actual API key
         - name: VEO_MODEL_ID
           value: "veo-3.0-fast-generate-001"
+        - name: PROJECT_ID
+          value: "gke-dev-471716"
+        - name: LOCATION
+          value: "us-central1"
         readinessProbe:
           initialDelaySeconds: 10
           periodSeconds: 120

@@ -1,4 +1,5 @@
 google-genai==1.38.0
+google-cloud-aiplatform==1.96.0
 grpcio
 grpcio-tools
 flask
