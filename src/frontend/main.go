@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/profiler"
@@ -54,10 +55,78 @@ var (
 		"TRY": true,
 	}
 
-	baseUrl         = ""
+	baseUrl = ""
 )
 
 type ctxKeySessionID struct{}
+
+// Notification represents a PEAU agent notification to display in the UI
+type Notification struct {
+	ID        string    `json:"id"`
+	Message   string    `json:"message"`
+	Timestamp time.Time `json:"timestamp"`
+	UserID    string    `json:"user_id"`
+	Read      bool      `json:"read"`
+}
+
+// NotificationStore manages notifications per session
+type NotificationStore struct {
+	mu            sync.RWMutex
+	notifications map[string][]*Notification // sessionID -> notifications
+}
+
+// NewNotificationStore creates a new notification store
+func NewNotificationStore() *NotificationStore {
+	return &NotificationStore{
+		notifications: make(map[string][]*Notification),
+	}
+}
+
+// AddNotification adds a notification for a session
+func (ns *NotificationStore) AddNotification(sessionID, userID, message string) {
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+
+	notification := &Notification{
+		ID:        fmt.Sprintf("%s_%d", sessionID, time.Now().UnixNano()),
+		Message:   message,
+		Timestamp: time.Now(),
+		UserID:    userID,
+		Read:      false,
+	}
+
+	ns.notifications[sessionID] = append(ns.notifications[sessionID], notification)
+}
+
+// GetNotifications returns all notifications for a session
+func (ns *NotificationStore) GetNotifications(sessionID string) []*Notification {
+	ns.mu.RLock()
+	defer ns.mu.RUnlock()
+
+	notifications := ns.notifications[sessionID]
+	if notifications == nil {
+		return []*Notification{}
+	}
+
+	// Return a copy to avoid race conditions
+	result := make([]*Notification, len(notifications))
+	copy(result, notifications)
+	return result
+}
+
+// MarkAsRead marks a notification as read
+func (ns *NotificationStore) MarkAsRead(sessionID, notificationID string) {
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+
+	notifications := ns.notifications[sessionID]
+	for _, notification := range notifications {
+		if notification.ID == notificationID {
+			notification.Read = true
+			break
+		}
+	}
+}
 
 type frontendServer struct {
 	productCatalogSvcAddr string
@@ -85,10 +154,13 @@ type frontendServer struct {
 	collectorConn *grpc.ClientConn
 
 	shoppingAssistantSvcAddr string
-	tryOnSvcAddr string
+	tryOnSvcAddr             string
 	chatbotSvcAddr           string
 	peauAgentSvcAddr         string
 	videoGenerationSvcAddr   string
+
+	// Notification store for PEAU agent responses
+	notifications *NotificationStore
 }
 
 func main() {
@@ -106,6 +178,7 @@ func main() {
 	log.Out = os.Stdout
 
 	svc := new(frontendServer)
+	svc.notifications = NewNotificationStore()
 
 	otel.SetTextMapPropagator(
 		propagation.NewCompositeTextMapPropagator(
@@ -154,30 +227,32 @@ func main() {
 	mustConnGRPC(ctx, &svc.adSvcConn, svc.adSvcAddr)
 
 	r := mux.NewRouter()
-	r.HandleFunc(baseUrl + "/", svc.homeHandler).Methods(http.MethodGet, http.MethodHead)
-	r.HandleFunc(baseUrl + "/product/{id}", svc.productHandler).Methods(http.MethodGet, http.MethodHead)
-	r.HandleFunc(baseUrl + "/cart", svc.viewCartHandler).Methods(http.MethodGet, http.MethodHead)
-	r.HandleFunc(baseUrl + "/cart", svc.addToCartHandler).Methods(http.MethodPost)
-	r.HandleFunc(baseUrl + "/cart/empty", svc.emptyCartHandler).Methods(http.MethodPost)
-	r.HandleFunc(baseUrl + "/setCurrency", svc.setCurrencyHandler).Methods(http.MethodPost)
-	r.HandleFunc(baseUrl + "/logout", svc.logoutHandler).Methods(http.MethodGet)
-	r.HandleFunc(baseUrl + "/cart/checkout", svc.placeOrderHandler).Methods(http.MethodPost)
-	r.HandleFunc(baseUrl + "/assistant", svc.assistantHandler).Methods(http.MethodGet)
-	r.HandleFunc(baseUrl + "/tryon", svc.tryOnHandler).Methods(http.MethodPost)
-	r.HandleFunc(baseUrl + "/generate-ads", svc.generateAdsHandler).Methods(http.MethodGet)
-	r.HandleFunc(baseUrl + "/admin", svc.homeHandler).Methods(http.MethodGet) // Admin route now renders homeHandler
-	r.HandleFunc(baseUrl + "/admin/generate-ads", svc.generateAdsHandler).Methods(http.MethodGet)
-	r.HandleFunc(baseUrl + "/api/products/search", svc.searchProductsForAdsHandler).Methods(http.MethodGet)
-	r.HandleFunc(baseUrl + "/api/generate-video", svc.generateVideoHandler).Methods(http.MethodPost)
-	r.HandleFunc(baseUrl + "/api/video-status/{job_id}", svc.videoStatusHandler).Methods(http.MethodGet)
-	r.HandleFunc(baseUrl + "/api/validate-video", svc.validateVideoHandler).Methods(http.MethodPost)
-	r.HandleFunc(baseUrl + "/video/{filename}", svc.serveVideoHandler).Methods(http.MethodGet)
-	r.PathPrefix(baseUrl + "/static/").Handler(http.StripPrefix(baseUrl + "/static/", http.FileServer(http.Dir("./static/"))))
-	r.HandleFunc(baseUrl + "/robots.txt", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "User-agent: *\nDisallow: /") })
-	r.HandleFunc(baseUrl + "/_healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "ok") })
-	r.HandleFunc(baseUrl + "/product-meta/{ids}", svc.getProductByID).Methods(http.MethodGet)
-	r.HandleFunc(baseUrl + "/bot", svc.chatBotHandler).Methods(http.MethodPost)
-	r.HandleFunc(baseUrl + "/chat/stream", svc.chatStreamHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/", svc.homeHandler).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc(baseUrl+"/product/{id}", svc.productHandler).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc(baseUrl+"/cart", svc.viewCartHandler).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc(baseUrl+"/cart", svc.addToCartHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/cart/empty", svc.emptyCartHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/setCurrency", svc.setCurrencyHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/logout", svc.logoutHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/cart/checkout", svc.placeOrderHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/assistant", svc.assistantHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/tryon", svc.tryOnHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/generate-ads", svc.generateAdsHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/admin", svc.homeHandler).Methods(http.MethodGet) // Admin route now renders homeHandler
+	r.HandleFunc(baseUrl+"/admin/generate-ads", svc.generateAdsHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/api/products/search", svc.searchProductsForAdsHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/api/generate-video", svc.generateVideoHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/api/video-status/{job_id}", svc.videoStatusHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/api/validate-video", svc.validateVideoHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/video/{filename}", svc.serveVideoHandler).Methods(http.MethodGet)
+	r.PathPrefix(baseUrl + "/static/").Handler(http.StripPrefix(baseUrl+"/static/", http.FileServer(http.Dir("./static/"))))
+	r.HandleFunc(baseUrl+"/robots.txt", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "User-agent: *\nDisallow: /") })
+	r.HandleFunc(baseUrl+"/_healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "ok") })
+	r.HandleFunc(baseUrl+"/product-meta/{ids}", svc.getProductByID).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/bot", svc.chatBotHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/chat/stream", svc.chatStreamHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/api/notifications", svc.getNotificationsHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/api/notifications/{id}/read", svc.markNotificationReadHandler).Methods(http.MethodPost)
 
 	var handler http.Handler = r
 	handler = &logHandler{log: log, next: handler}     // add logging
