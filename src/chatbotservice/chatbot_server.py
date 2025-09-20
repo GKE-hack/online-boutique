@@ -314,7 +314,7 @@ Customer message: {user_message}
 
 Please provide a helpful, friendly response. If the customer is asking about specific products, include relevant product details like name, price, and description. If they're looking for recommendations, suggest appropriate products from the catalog. Keep your responses concise but informative.
 
-If you recommend specific products, include their product IDs in square brackets like [PRODUCT_ID] at the end of your response."""
+IMPORTANT: Whenever you mention or recommend a specific product, ALWAYS include its product ID in square brackets directly after mentioning it. For example: "The Vintage Camera Lens Mug [1YMWWN1N4O] would be perfect for photography enthusiasts." This allows customers to click and view the product directly."""
 
             # Generate response using Gemini 2.0 Flash
             response = self.model.generate_content(prompt)
@@ -459,7 +459,7 @@ Customer message: {user_message}
 
 Please provide a helpful, friendly response. If the customer is asking about specific products, include relevant product details like name, price, and description. If they're looking for recommendations, suggest appropriate products from the catalog. Keep your responses concise but informative.
 
-If you recommend specific products, include their product IDs in square brackets like [PRODUCT_ID] at the end of your response."""
+IMPORTANT: Whenever you mention or recommend a specific product, ALWAYS include its product ID in square brackets directly after mentioning it. For example: "The Vintage Camera Lens Mug [1YMWWN1N4O] would be perfect for photography enthusiasts." This allows customers to click and view the product directly."""
 
             # Generate streaming response using Gemini 2.0 Flash
             response_stream = self.model.generate_content(prompt, stream=True)

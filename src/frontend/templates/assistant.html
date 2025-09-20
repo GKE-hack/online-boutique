@@ -66,6 +66,37 @@
 
       if (savedHistory) {
         conversationHistory = JSON.parse(savedHistory);
+
+        // Restore chat messages from history if we have any
+        if (conversationHistory.length > 0) {
+          // Clear default greeting messages
+          botMessages.innerHTML = '';
+
+          // Rebuild conversation UI from history
+          conversationHistory.forEach(msg => {
+            if (msg.startsWith('User: ')) {
+              const userMsg = msg.substring(6);
+              const usermessage = document.createElement('p');
+              const userMessageSpan = document.createElement('span');
+              userMessageSpan.innerText = userMsg;
+              userMessageSpan.classList.add('user-message-text');
+              usermessage.classList.add('user-message');
+              usermessage.appendChild(userMessageSpan);
+              botMessages.appendChild(usermessage);
+            } else if (msg.startsWith('Assistant: ')) {
+              const botMsg = msg.substring(11);
+              const botMessage = document.createElement('p');
+              const botMessageSpan = document.createElement('span');
+              botMessageSpan.innerHTML = parseMarkdown(botMsg.replace(/\n+[-*\d][\S\s]*/g, ""));
+              botMessageSpan.classList.add('bot-message-text');
+              botMessage.classList.add('bot-message');
+              botMessage.appendChild(botMessageSpan);
+              botMessages.appendChild(botMessage);
+            }
+          });
+
+          botMessages.scrollTo(0, botMessages.scrollHeight);
+        }
       }
     } catch (e) {
       console.error('Failed to load session:', e);
@@ -83,7 +114,14 @@
 
   // Parse markdown to HTML
   function parseMarkdown(text) {
-    let html = text
+    // Convert product IDs to clickable links first
+    // Pattern: [PRODUCT_ID] becomes a clickable link
+    let html = text.replace(/\[([A-Z0-9]+)\]/g, function(match, productId) {
+      return `<a href="{{ $.baseUrl }}/product/${productId}" style="color: #4285f4; text-decoration: underline;">[${productId}]</a>`;
+    });
+
+    // Basic markdown parsing
+    html = html
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
       .replace(/```(.*?)```/gs, '<pre><code>$1</code></pre>')

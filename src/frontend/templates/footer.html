@@ -245,6 +245,31 @@
 
             if (savedHistory) {
                 conversationHistory = JSON.parse(savedHistory);
+
+                // Restore chat messages from history
+                if (conversationHistory.length > 0) {
+                    // Clear default greeting message
+                    chatMessages.innerHTML = '';
+
+                    // Rebuild conversation UI from history
+                    conversationHistory.forEach(msg => {
+                        if (msg.startsWith('User: ')) {
+                            const userMsg = msg.substring(6);
+                            const messageDiv = document.createElement('div');
+                            messageDiv.className = 'user-message';
+                            messageDiv.innerHTML = `<span>${userMsg}</span>`;
+                            chatMessages.appendChild(messageDiv);
+                        } else if (msg.startsWith('Assistant: ')) {
+                            const botMsg = msg.substring(11);
+                            const messageDiv = document.createElement('div');
+                            messageDiv.className = 'bot-message';
+                            messageDiv.innerHTML = `<span>${parseMarkdown(botMsg)}</span>`;
+                            chatMessages.appendChild(messageDiv);
+                        }
+                    });
+
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
             }
 
             if (savedSession) {
@@ -273,8 +298,14 @@
 
     // Parse markdown to HTML
     function parseMarkdown(text) {
+        // Convert product IDs to clickable links first
+        // Pattern: [PRODUCT_ID] becomes a clickable link
+        let html = text.replace(/\[([A-Z0-9]+)\]/g, function(match, productId) {
+            return `<a href="{{ $.baseUrl }}/product/${productId}" style="color: #4285f4; text-decoration: underline;">[${productId}]</a>`;
+        });
+
         // Basic markdown parsing
-        let html = text
+        html = html
             // Bold
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             // Italic
