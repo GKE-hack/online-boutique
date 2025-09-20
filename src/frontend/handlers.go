@@ -545,11 +545,11 @@ func (fe *frontendServer) chatStreamHandler(w http.ResponseWriter, r *http.Reque
 	defer resp.Body.Close()
 
 	// Create a flusher first before setting headers
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		renderHTTPError(log, r, w, errors.New("streaming unsupported"), http.StatusInternalServerError)
-		return
-	}
+	// flusher, ok := w.(http.Flusher)
+	// if !ok {
+	// 	renderHTTPError(log, r, w, errors.New("streaming unsupported"), http.StatusInternalServerError)
+	// 	return
+	// }
 
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -566,7 +566,10 @@ func (fe *frontendServer) chatStreamHandler(w http.ResponseWriter, r *http.Reque
 				log.WithError(writeErr).Error("failed to write streaming response")
 				return
 			}
-			flusher.Flush()
+			// If flusher is available, flush it. This is a best-effort approach.
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
 		}
 		if err != nil {
 			if err != io.EOF {
