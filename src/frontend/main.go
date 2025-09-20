@@ -165,6 +165,8 @@ func main() {
 	r.HandleFunc(baseUrl + "/assistant", svc.assistantHandler).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl + "/tryon", svc.tryOnHandler).Methods(http.MethodPost)
 	r.HandleFunc(baseUrl + "/generate-ads", svc.generateAdsHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl + "/admin", svc.homeHandler).Methods(http.MethodGet) // Admin route now renders homeHandler
+	r.HandleFunc(baseUrl + "/admin/generate-ads", svc.generateAdsHandler).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl + "/api/products/search", svc.searchProductsForAdsHandler).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl + "/api/generate-video", svc.generateVideoHandler).Methods(http.MethodPost)
 	r.HandleFunc(baseUrl + "/api/video-status/{job_id}", svc.videoStatusHandler).Methods(http.MethodGet)

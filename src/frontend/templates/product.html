@@ -73,39 +73,17 @@
             {{ $category := index $.product.Item.Categories 0 }}
             {{ if or (eq $category "accessories") (eq $category "clothing") (eq $category "footwear") }}
               <h3>Virtual Try-On</h3>
-            {{ else if or (eq $category "home") (eq $category "decor") (eq $category "furniture") }}
-              <h3>Room Visualization</h3>
-            {{ else if or (eq $category "kitchen") (eq $category "appliances") }}
-              <h3>Kitchen Visualization</h3>
-            {{ else }}
-              <h3>Product Visualization</h3>
-            {{ end }}
             <form id="tryon-form" enctype="multipart/form-data" onsubmit="return false;">
               <input type="hidden" name="product_id" value="{{$.product.Item.Id}}" />
               <input type="hidden" name="category" value="{{index $.product.Item.Categories 0}}" />
               <div class="mb-2">
-                {{ if or (eq $category "accessories") (eq $category "clothing") (eq $category "footwear") }}
-                  <label for="base_image">Upload your photo</label>
-                {{ else if or (eq $category "home") (eq $category "decor") (eq $category "furniture") }}
-                  <label for="base_image">Upload a room photo</label>
-                {{ else if or (eq $category "kitchen") (eq $category "appliances") }}
-                  <label for="base_image">Upload a kitchen photo</label>
-                {{ else }}
-                  <label for="base_image">Upload a photo</label>
-                {{ end }}
+                <label for="base_image">Upload your photo</label>
                 <input id="base_image" name="base_image" type="file" accept="image/*" required />
               </div>
-              {{ if or (eq $category "accessories") (eq $category "clothing") (eq $category "footwear") }}
                 <button id="tryon-submit" class="cymbal-button-primary" type="button">Try on me</button>
-              {{ else if or (eq $category "home") (eq $category "decor") (eq $category "furniture") }}
-                <button id="tryon-submit" class="cymbal-button-primary" type="button">Place in room</button>
-              {{ else if or (eq $category "kitchen") (eq $category "appliances") }}
-                <button id="tryon-submit" class="cymbal-button-primary" type="button">Place in kitchen</button>
-              {{ else }}
-                <button id="tryon-submit" class="cymbal-button-primary" type="button">Visualize</button>
-              {{ end }}
               <span id="tryon-status" style="margin-left:8px; min-width: 18px; display: inline-block;" aria-live="polite"></span>
             </form>
+            {{ end }}
             <div id="tryon-result" class="mt-3" style="display:none;">
               <h4>Result</h4>
               <img id="tryon-image" alt="Try-on result" style="max-width:100%;height:auto;border:1px solid #ddd;"/>

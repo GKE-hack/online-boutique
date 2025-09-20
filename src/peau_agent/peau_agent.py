@@ -241,7 +241,7 @@ Create a flirty message that includes:
 
 Style: Start flirty and playful, then highlight the product's features from the description
 Use emojis and make it feel like the product has feelings
-Be persuasive but fun"""
+Be persuasive but fun. Do not return multiple messages."""
 
         return self._execute_suggestion_generation(user_id, prompt)
 

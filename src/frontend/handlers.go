@@ -105,6 +105,12 @@ func (fe *frontendServer) trackBehavior(ctx context.Context, userID string, even
 func (fe *frontendServer) homeHandler(w http.ResponseWriter, r *http.Request) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	log.WithField("currency", currentCurrency(r)).Info("home")
+
+	isAdmin := (r.URL.Path == baseUrl + "/admin")
+
+	// New variable for explicitly authenticated admin access
+	isAuthenticatedAdmin := isAdmin // For this feature, isAdmin implies authenticated admin
+
 	currencies, err := fe.getCurrencies(r.Context())
 	if err != nil {
 		renderHTTPError(log, r, w, errors.Wrap(err, "could not retrieve currencies"), http.StatusInternalServerError)
@@ -160,6 +166,8 @@ func (fe *frontendServer) homeHandler(w http.ResponseWriter, r *http.Request) {
 		"cart_size":     cartSize(cart),
 		"banner_color":  os.Getenv("BANNER_COLOR"), // illustrates canary deployments
 		"ad":            fe.chooseAd(r.Context(), []string{}, log),
+		"IsAdmin":       isAdmin,
+		"IsAuthenticatedAdmin": isAuthenticatedAdmin,
 	})); err != nil {
 		log.Error(err)
 	}
@@ -781,6 +789,7 @@ func injectCommonTemplateData(r *http.Request, payload map[string]interface{}) m
 		"frontendMessage":   frontendMessage,
 		"currentYear":       time.Now().Year(),
 		"baseUrl":           baseUrl,
+		"IsSignedIn":        isUserSignedIn(r),
 	}
 
 	for k, v := range payload {
@@ -871,14 +880,21 @@ func hasAnyCategory(categories []string, targets ...string) bool {
 	}
 	return false
 }
+
+func isUserSignedIn(r *http.Request) bool {
+    return sessionID(r) != ""
+}
+
 // Video Generation Handlers
 
 func (fe *frontendServer) generateAdsHandler(w http.ResponseWriter, r *http.Request) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
-	
-	if err := templates.ExecuteTemplate(w, "generate-ads", map[string]interface{}{
-		"baseUrl": baseUrl,
-	}); err != nil {
+
+	isAdmin := (r.URL.Path == baseUrl + "/admin/generate-ads")
+
+	if err := templates.ExecuteTemplate(w, "generate-ads", injectCommonTemplateData(r, map[string]interface{}{
+		"IsAdmin": isAdmin,
+	})); err != nil {
 		log.Println(err)
 	}
 }
