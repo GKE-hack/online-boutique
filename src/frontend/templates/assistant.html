@@ -49,6 +49,56 @@
 <script>
   // Store conversation history for context
   var conversationHistory = [];
+  var sessionId = null;
+
+  // Load session from localStorage
+  function loadSession() {
+    try {
+      const savedSession = localStorage.getItem('chatSessionId');
+      const savedHistory = localStorage.getItem('chatHistory');
+
+      if (savedSession) {
+        sessionId = savedSession;
+      } else {
+        sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('chatSessionId', sessionId);
+      }
+
+      if (savedHistory) {
+        conversationHistory = JSON.parse(savedHistory);
+      }
+    } catch (e) {
+      console.error('Failed to load session:', e);
+    }
+  }
+
+  // Save session to localStorage
+  function saveSession() {
+    try {
+      localStorage.setItem('chatHistory', JSON.stringify(conversationHistory));
+    } catch (e) {
+      console.error('Failed to save session:', e);
+    }
+  }
+
+  // Parse markdown to HTML
+  function parseMarkdown(text) {
+    let html = text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/```(.*?)```/gs, '<pre><code>$1</code></pre>')
+      .replace(/`(.*?)`/g, '<code>$1</code>')
+      .replace(/^\* (.+)$/gm, '<li>$1</li>')
+      .replace(/^- (.+)$/gm, '<li>$1</li>')
+      .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+      .replace(/\n/g, '<br>');
+
+    html = html.replace(/(<li>.*?<\/li>(<br>)?)+/g, function(match) {
+      return '<ul>' + match.replace(/<br>/g, '') + '</ul>';
+    });
+
+    return html;
+  }
 
   function extractIdsFromString(message) {
     const idPattern = /\[([a-zA-Z0-9-]+)\]/g;
@@ -67,6 +117,9 @@
   const botinput = document.getElementById("bot-input-text");
 
   async function main() {
+    // Load session on page load
+    loadSession();
+
     botbutton.addEventListener("click", handleButtonClick);
 
     botinput.addEventListener("keypress", (event) => {
@@ -85,10 +138,10 @@
     console.log("bot button clicked");
     const message = botinput.value;
     console.log("message: " + message);
-    
+
     // Add to conversation history
     conversationHistory.push("User: " + message);
-    
+
     const usermessage = document.createElement("p");
     const userMessageSpan = document.createElement("span");
     userMessageSpan.innerText = message;
@@ -104,42 +157,139 @@
     botinput.disabled = true;
     console.log("bot is typing");
 
-    // Construct and render placeholder bot message
-    const botMessage = document.createElement("p");
-    botMessage.classList.add("bot-message-loading");
-    const botMessageSpan = document.createElement("span");
-    botMessageSpan.innerText = ""
-    botMessageSpan.classList.add("bot-message-text");
-    botMessage.classList.add("bot-message");
-    botMessage.appendChild(botMessageSpan);
-    botMessages.appendChild(botMessage);
-    botMessages.scrollTo(0, botMessages.scrollHeight);
+    // Try streaming first
+    const useStreaming = true;
+    let responseJson = null;
+    let botMessage = null;
+    let botMessageSpan = null;
+    let extractedIds = [];
 
-    // Request a response from the Chatbot Service
-    const response = await fetch("{{ $.baseUrl }}/bot", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        message: message,
-        history: conversationHistory.slice(-10) // Keep last 10 messages for context
-      }),
-    });
-    const responseJson = await response.json();
-    console.log(responseJson);
+    if (useStreaming) {
+      // Create bot message for streaming
+      botMessage = document.createElement("p");
+      botMessageSpan = document.createElement("span");
+      botMessageSpan.innerHTML = "";
+      botMessageSpan.classList.add("bot-message-text");
+      botMessage.classList.add("bot-message");
+      botMessage.appendChild(botMessageSpan);
+      botMessages.appendChild(botMessage);
+      botMessages.scrollTo(0, botMessages.scrollHeight);
 
-    // Fetch the product IDs from the response
-    const extractedIds = extractIdsFromString(responseJson.message);
-    console.log(extractedIds);
+      let fullResponse = '';
+      let metadata = null;
 
-    // Add bot response to conversation history
-    conversationHistory.push("Assistant: " + responseJson.message);
-    
-    // Replace the placeholder bot message text with the real response
-    // Making sure to remove any lists or product IDs from that message
-    botMessageSpan.innerText = responseJson.message.replace(/\n+[-*\d][\S\s]*/g, "");
-    botMessage.classList.remove("bot-message-loading");
+      try {
+        const response = await fetch("{{ $.baseUrl }}/chat/stream", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message: message,
+            history: conversationHistory.slice(-10),
+            session_id: sessionId
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Streaming not available');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data) {
+                try {
+                  const parsed = JSON.parse(data);
+                  if (parsed.text) {
+                    fullResponse += parsed.text;
+                    botMessageSpan.innerHTML = parseMarkdown(fullResponse.replace(/\n+[-*\d][\S\s]*/g, ""));
+                    botMessages.scrollTo(0, botMessages.scrollHeight);
+                  } else if (parsed.metadata) {
+                    metadata = parsed.metadata;
+                    if (metadata.session_id) {
+                      sessionId = metadata.session_id;
+                      localStorage.setItem('chatSessionId', sessionId);
+                    }
+                    if (metadata.recommended_products) {
+                      extractedIds = metadata.recommended_products;
+                    }
+                  } else if (parsed.done) {
+                    break;
+                  }
+                } catch (e) {
+                  console.error('Error parsing SSE:', e);
+                }
+              }
+            }
+          }
+        }
+
+        conversationHistory.push("Assistant: " + fullResponse);
+        saveSession();
+        responseJson = { message: fullResponse };
+
+      } catch (error) {
+        console.error('Streaming failed, falling back:', error);
+        // Remove streaming message
+        botMessages.removeChild(botMessage);
+        // Fall back to regular endpoint
+        useStreaming = false;
+      }
+    }
+
+    if (!useStreaming) {
+      // Fallback to regular non-streaming
+      botMessage = document.createElement("p");
+      botMessage.classList.add("bot-message-loading");
+      botMessageSpan = document.createElement("span");
+      botMessageSpan.innerText = "";
+      botMessageSpan.classList.add("bot-message-text");
+      botMessage.classList.add("bot-message");
+      botMessage.appendChild(botMessageSpan);
+      botMessages.appendChild(botMessage);
+      botMessages.scrollTo(0, botMessages.scrollHeight);
+
+      const response = await fetch("{{ $.baseUrl }}/bot", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: message,
+          history: conversationHistory.slice(-10),
+          session_id: sessionId
+        }),
+      });
+      responseJson = await response.json();
+      console.log(responseJson);
+
+      if (responseJson.session_id) {
+        sessionId = responseJson.session_id;
+        localStorage.setItem('chatSessionId', sessionId);
+      }
+
+      extractedIds = extractIdsFromString(responseJson.message);
+      console.log(extractedIds);
+
+      conversationHistory.push("Assistant: " + responseJson.message);
+      saveSession();
+
+      botMessageSpan.innerHTML = parseMarkdown(responseJson.message.replace(/\n+[-*\d][\S\s]*/g, ""));
+      botMessage.classList.remove("bot-message-loading");
+    }
 
     // If there are any product IDs...
     if (extractedIds.length > 0) {

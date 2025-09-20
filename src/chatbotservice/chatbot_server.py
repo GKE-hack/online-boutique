@@ -19,17 +19,19 @@ import json
 import traceback
 import sys
 from concurrent import futures
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Generator
 import grpc
 from grpc_health.v1 import health_pb2_grpc, health_pb2
 import vertexai
 from vertexai.generative_models import GenerativeModel
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from werkzeug.serving import run_simple
 import threading
 import requests # Added for PEAU Agent client
 import time # Added for timestamp for mock behavior events
+from queue import Queue
+import uuid
 
 # Import generated protobuf classes
 import demo_pb2
@@ -167,10 +169,11 @@ class ProductCatalogClient:
 
 class ChatbotService:
     """Main chatbot service using Gemini 2.0 Flash"""
-    
+
     def __init__(self, project_id: str, location: str):
         self.project_id = project_id
         self.location = location
+        self.sessions = {}  # Store session data
         
         try:
             logger.info(f"Initializing Vertex AI with project_id='{project_id}', location='{location}'")
@@ -397,16 +400,98 @@ If you recommend specific products, include their product IDs in square brackets
         # Look for patterns like [PRODUCT_ID] or mentions of known product IDs
         product_id_pattern = r'\[([A-Z0-9]+)\]'
         matches = re.findall(product_id_pattern, response_text)
-        
+
         # Also look for mentions of known product IDs (common ones from catalog)
-        known_ids = ['OLJCESPC7Z', '66VCHSJNUP', '1YMWWN1N4O', 'L9ECAV7KIM', '2ZYFJ3GM2N', 
+        known_ids = ['OLJCESPC7Z', '66VCHSJNUP', '1YMWWN1N4O', 'L9ECAV7KIM', '2ZYFJ3GM2N',
                      '0PUK6V6EV0', 'LS4PSXUNUM', '9SIQT8TOJO', '6E92ZMYYFZ']
-        
+
         for product_id in known_ids:
             if product_id in response_text and product_id not in matches:
                 matches.append(product_id)
-        
+
         return matches
+
+    def get_or_create_session(self, session_id: str = None) -> str:
+        """Get existing session or create a new one"""
+        if not session_id:
+            session_id = f"session_{uuid.uuid4().hex[:12]}"
+
+        if session_id not in self.sessions:
+            self.sessions[session_id] = {
+                'history': [],
+                'created_at': time.time()
+            }
+
+        return session_id
+
+    def generate_streaming_response(self, user_message: str, session_id: str = None, conversation_history: List[str] = None) -> Generator:
+        """Generate streaming response using Gemini's streaming API"""
+        try:
+            logger.info(f"Generating streaming response for: '{user_message[:100]}...'")
+
+            # Get or create session
+            session_id = self.get_or_create_session(session_id)
+            session_data = self.sessions[session_id]
+
+            # Use session history if no conversation history provided
+            if conversation_history is None:
+                conversation_history = session_data['history']
+
+            # Get all products for context
+            products = self.catalog_client.list_products()
+            product_context = self.generate_product_context(products)
+
+            # Create the conversation history
+            history_text = ""
+            if conversation_history:
+                history_text = "\n".join(conversation_history[-10:])  # Keep last 10 messages
+
+            # Create the prompt for Gemini
+            prompt = f"""You are a helpful shopping assistant for Online Boutique, an e-commerce store.
+Your role is to help customers find products, answer questions about products, and provide shopping recommendations.
+
+{product_context}
+
+Conversation history:
+{history_text}
+
+Customer message: {user_message}
+
+Please provide a helpful, friendly response. If the customer is asking about specific products, include relevant product details like name, price, and description. If they're looking for recommendations, suggest appropriate products from the catalog. Keep your responses concise but informative.
+
+If you recommend specific products, include their product IDs in square brackets like [PRODUCT_ID] at the end of your response."""
+
+            # Generate streaming response using Gemini 2.0 Flash
+            response_stream = self.model.generate_content(prompt, stream=True)
+
+            full_response = ""
+            for chunk in response_stream:
+                if chunk.text:
+                    full_response += chunk.text
+                    yield chunk.text
+
+            # Update session history
+            session_data['history'].append(f"User: {user_message}")
+            session_data['history'].append(f"Assistant: {full_response}")
+
+            # Extract product IDs from the full response
+            recommended_products = self._extract_product_ids(full_response, products)
+
+            # Yield metadata as the last chunk
+            yield json.dumps({
+                'metadata': {
+                    'session_id': session_id,
+                    'recommended_products': recommended_products,
+                    'total_products_considered': len(products)
+                }
+            })
+
+        except Exception as e:
+            logger.error(f"Error in streaming response: {str(e)}")
+            yield json.dumps({
+                'error': str(e),
+                'session_id': session_id
+            })
 
 class HealthServicer(health_pb2_grpc.HealthServicer):
     """Health check service for gRPC"""
@@ -429,21 +514,69 @@ def create_flask_app(chatbot_service: ChatbotService) -> Flask:
     @app.route('/health', methods=['GET'])
     def health_check():
         return jsonify({'status': 'healthy'})
+
+    @app.route('/chat/stream', methods=['POST'])
+    def chat_stream():
+        """SSE endpoint for streaming chat responses"""
+        try:
+            logger.info(f"Received streaming chat request from {request.remote_addr}")
+
+            data = request.get_json()
+
+            if not data or 'message' not in data:
+                logger.warning("Invalid request: missing message field")
+                return jsonify({'error': 'Message is required'}), 400
+
+            user_message = data['message']
+            conversation_history = data.get('history', [])
+            session_id = data.get('session_id', None)
+
+            logger.info(f"Processing streaming message: '{user_message[:100]}...'")
+
+            def generate():
+                """Generate SSE events"""
+                try:
+                    for chunk in chatbot_service.generate_streaming_response(user_message, session_id, conversation_history):
+                        # Check if it's metadata (last chunk)
+                        if chunk.startswith('{') and 'metadata' in chunk:
+                            yield f"data: {chunk}\n\n"
+                        else:
+                            # Regular text chunk
+                            yield f"data: {json.dumps({'text': chunk})}\n\n"
+                    # Send end signal
+                    yield f"data: {json.dumps({'done': True})}\n\n"
+                except Exception as e:
+                    logger.error(f"Error in streaming: {str(e)}")
+                    yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+            return Response(generate(), mimetype='text/event-stream', headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',  # Disable nginx buffering
+                'Connection': 'keep-alive'
+            })
+
+        except Exception as e:
+            logger.error(f"Error in chat stream endpoint: {str(e)}")
+            return jsonify({'error': str(e)}), 500
     
     @app.route('/chat', methods=['POST'])
     @app.route('/bot', methods=['POST'])  # Add back for frontend compatibility
     def chat():
         try:
             logger.info(f"Received chat request from {request.remote_addr}")
-            
+
             data = request.get_json()
-            
+
             if not data or 'message' not in data:
                 logger.warning("Invalid request: missing message field")
                 return jsonify({'error': 'Message is required'}), 400
-            
+
             user_message = data['message']
             conversation_history = data.get('history', [])
+            session_id = data.get('session_id', None)
+
+            # Get or create session
+            session_id = chatbot_service.get_or_create_session(session_id)
             
             logger.info(f"Processing message: '{user_message[:100]}...'")
             
@@ -462,9 +595,11 @@ def create_flask_app(chatbot_service: ChatbotService) -> Flask:
             response_data = {
                 'success': True,
                 'response': str(response.get('response', '')),
+                'message': str(response.get('response', '')),  # Add for compatibility
                 'recommended_products': response.get('recommended_products', []),
                 'total_products_considered': total_products_int,
-                'rag_enhanced': response.get('rag_enhanced', False)
+                'rag_enhanced': response.get('rag_enhanced', False),
+                'session_id': session_id
             }
             
             # Add error details if present (for debugging)

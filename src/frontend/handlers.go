@@ -509,6 +509,74 @@ func (fe *frontendServer) getProductByID(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusOK)
 }
 
+func (fe *frontendServer) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+
+	// Parse the incoming request
+	var req map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to parse request body"), http.StatusBadRequest)
+		return
+	}
+
+	// Forward to chatbot service streaming endpoint
+	chatbotURL := "http://" + fe.chatbotSvcAddr + "/chat/stream"
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to marshal request"), http.StatusInternalServerError)
+		return
+	}
+
+	// Create request to chatbot service
+	chatReq, err := http.NewRequest("POST", chatbotURL, bytes.NewBuffer(reqBody))
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create request"), http.StatusInternalServerError)
+		return
+	}
+	chatReq.Header.Set("Content-Type", "application/json")
+
+	// Forward the request
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(chatReq)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to contact chatbot service"), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Create a flusher
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		renderHTTPError(log, r, w, errors.New("streaming unsupported"), http.StatusInternalServerError)
+		return
+	}
+
+	// Stream the response
+	buffer := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buffer)
+		if n > 0 {
+			if _, writeErr := w.Write(buffer[:n]); writeErr != nil {
+				log.WithError(writeErr).Error("failed to write streaming response")
+				return
+			}
+			flusher.Flush()
+		}
+		if err != nil {
+			if err != io.EOF {
+				log.WithError(err).Error("error reading streaming response")
+			}
+			break
+		}
+	}
+}
+
 func (fe *frontendServer) chatBotHandler(w http.ResponseWriter, r *http.Request) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	
