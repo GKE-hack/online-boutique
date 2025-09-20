@@ -394,14 +394,8 @@
         chatInput.disabled = true;
         chatSend.disabled = true;
 
-        // Try streaming first, fallback to regular if not supported
-        const useStreaming = true;  // Feature flag for streaming
-
-        if (useStreaming) {
-            await sendMessageWithStreaming(message);
-        } else {
-            await sendMessageRegular(message);
-        }
+        // Always use streaming
+        await sendMessageWithStreaming(message);
 
         // Re-enable input
         chatInput.disabled = false;
@@ -436,9 +430,9 @@
             });
 
             if (!response.ok) {
-                // Fallback to regular endpoint
-                chatMessages.removeChild(messageDiv);
-                await sendMessageRegular(message);
+                // Show error message
+                messageSpan.innerHTML = 'Sorry, I encountered an error. Please try again.';
+                console.error('Streaming endpoint returned error:', response.status);
                 return;
             }
 
@@ -492,9 +486,8 @@
             }
 
         } catch (error) {
-            console.error('Streaming error, falling back:', error);
-            chatMessages.removeChild(messageDiv);
-            await sendMessageRegular(message);
+            console.error('Streaming error:', error);
+            messageSpan.innerHTML = 'Sorry, I encountered an error. Please try again.';
         }
     }
 

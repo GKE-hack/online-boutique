@@ -195,28 +195,26 @@
     botinput.disabled = true;
     console.log("bot is typing");
 
-    // Try streaming first
-    const useStreaming = true;
+    // Always use streaming
     let responseJson = null;
     let botMessage = null;
     let botMessageSpan = null;
     let extractedIds = [];
 
-    if (useStreaming) {
-      // Create bot message for streaming
-      botMessage = document.createElement("p");
-      botMessageSpan = document.createElement("span");
-      botMessageSpan.innerHTML = "";
-      botMessageSpan.classList.add("bot-message-text");
-      botMessage.classList.add("bot-message");
-      botMessage.appendChild(botMessageSpan);
-      botMessages.appendChild(botMessage);
-      botMessages.scrollTo(0, botMessages.scrollHeight);
+    // Create bot message for streaming
+    botMessage = document.createElement("p");
+    botMessageSpan = document.createElement("span");
+    botMessageSpan.innerHTML = "";
+    botMessageSpan.classList.add("bot-message-text");
+    botMessage.classList.add("bot-message");
+    botMessage.appendChild(botMessageSpan);
+    botMessages.appendChild(botMessage);
+    botMessages.scrollTo(0, botMessages.scrollHeight);
 
-      let fullResponse = '';
-      let metadata = null;
+    let fullResponse = '';
+    let metadata = null;
 
-      try {
+    try {
         const response = await fetch("{{ $.baseUrl }}/chat/stream", {
           method: "POST",
           headers: {
@@ -230,7 +228,9 @@
         });
 
         if (!response.ok) {
-          throw new Error('Streaming not available');
+          console.error('Streaming endpoint returned error:', response.status);
+          botMessageSpan.innerHTML = 'Sorry, I encountered an error. Please try again.';
+          return;
         }
 
         const reader = response.body.getReader();
@@ -279,54 +279,9 @@
         saveSession();
         responseJson = { message: fullResponse };
 
-      } catch (error) {
-        console.error('Streaming failed, falling back:', error);
-        // Remove streaming message
-        botMessages.removeChild(botMessage);
-        // Fall back to regular endpoint
-        useStreaming = false;
-      }
-    }
-
-    if (!useStreaming) {
-      // Fallback to regular non-streaming
-      botMessage = document.createElement("p");
-      botMessage.classList.add("bot-message-loading");
-      botMessageSpan = document.createElement("span");
-      botMessageSpan.innerText = "";
-      botMessageSpan.classList.add("bot-message-text");
-      botMessage.classList.add("bot-message");
-      botMessage.appendChild(botMessageSpan);
-      botMessages.appendChild(botMessage);
-      botMessages.scrollTo(0, botMessages.scrollHeight);
-
-      const response = await fetch("{{ $.baseUrl }}/bot", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: message,
-          history: conversationHistory.slice(-10),
-          session_id: sessionId
-        }),
-      });
-      responseJson = await response.json();
-      console.log(responseJson);
-
-      if (responseJson.session_id) {
-        sessionId = responseJson.session_id;
-        localStorage.setItem('chatSessionId', sessionId);
-      }
-
-      extractedIds = extractIdsFromString(responseJson.message);
-      console.log(extractedIds);
-
-      conversationHistory.push("Assistant: " + responseJson.message);
-      saveSession();
-
-      botMessageSpan.innerHTML = parseMarkdown(responseJson.message.replace(/\n+[-*\d][\S\s]*/g, ""));
-      botMessage.classList.remove("bot-message-loading");
+    } catch (error) {
+      console.error('Streaming failed:', error);
+      botMessageSpan.innerHTML = 'Sorry, I encountered an error. Please try again.';
     }
 
     // If there are any product IDs...

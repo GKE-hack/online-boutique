@@ -544,18 +544,18 @@ func (fe *frontendServer) chatStreamHandler(w http.ResponseWriter, r *http.Reque
 	}
 	defer resp.Body.Close()
 
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-
-	// Create a flusher
+	// Create a flusher first before setting headers
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		renderHTTPError(log, r, w, errors.New("streaming unsupported"), http.StatusInternalServerError)
 		return
 	}
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	// Stream the response
 	buffer := make([]byte, 4096)
