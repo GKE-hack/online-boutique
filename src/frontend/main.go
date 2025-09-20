@@ -178,6 +178,7 @@ func main() {
 	r.HandleFunc(baseUrl + "/product-meta/{ids}", svc.getProductByID).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl + "/bot", svc.chatBotHandler).Methods(http.MethodPost)
 	r.HandleFunc(baseUrl + "/chat/stream", svc.chatStreamHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl + "/api/peau-notification", svc.peauNotificationHandler).Methods(http.MethodPost)
 
 	var handler http.Handler = r
 	handler = &logHandler{log: log, next: handler}     // add logging

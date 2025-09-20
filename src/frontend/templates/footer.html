@@ -47,6 +47,26 @@
         </div>
     </div>
 </footer>
+<!-- Notification Popup -->
+<div id="notification-popup" style="display: none; position: fixed; top: 70px; right: 20px; width: 350px; max-width: 90vw; background: white; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.15); z-index: 1001; padding: 20px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h4 style="margin: 0; color: #333; font-size: 18px;">💡 Personalized Suggestion</h4>
+        <button onclick="closeNotification()" style="background: none; border: none; font-size: 20px; cursor: pointer; color: #666;">&times;</button>
+    </div>
+    <div id="notification-content" style="color: #555; font-size: 14px; line-height: 1.5; margin-bottom: 15px;">
+        Loading suggestion...
+    </div>
+    <div id="notification-products" style="display: none;">
+        <h5 style="margin: 10px 0 8px 0; color: #666; font-size: 13px;">Recommended Products:</h5>
+        <div id="notification-product-list" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+    </div>
+</div>
+
+<!-- Audio for notification sound -->
+<audio id="notification-sound" preload="auto">
+    <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBiuBzvLZijYKFWm98OScTgwOUazi6KlXFAotfsn1M0gCHz3P8uiLOwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBiuBzvLZijYKFWm98OScTgwOUazi6KlXFAotfsn1M0gCHz3P8uiLOwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBiuBzvLZijYKFWm98OScTgwOUazi6KlXFAotfsn1M0gCHz3P8uiLOwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBiuBzvLZijYKFWm98OScTgwOUazi6KlXFAotfsn1M0gCHz3P8uiLOwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBiuBzvLZijYKFWm98OScTgwOUazi6KlXFAotfsn1M0gCHz3P8uiLOwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBiuBzvLZijYKFWm98OScTgwOUazi6KlXFAotfsn1M0gCHz3P8uiLOwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBiuBzvLZijYKFWm98OScTgwOUazi6KlXFAotfsn1M0gCHz3P8uiLOwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBiuBzvLZijYKFWm98OScTgwOUazi6KlXFAotfsn1M0gCHz3P8uiLOwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBiuBzvLZijYKFWm98OScTgwOUazi6KlXFAotfsn1M0gCHz3P8uiLOwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBiuBzvLZijYKFWm98OScTgwOUazi6KlXFAotfsn1M0gCHz3P8uiLOwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBi" />
+</audio>
+
 <!-- Floating Chat Widget -->
 <div id="chat-widget" class="chat-widget">
     <div id="chat-toggle" class="chat-toggle">
@@ -585,6 +605,163 @@
 
     // Initialize chat state on page load
     loadChatState();
+})();
+
+// PEAU Notification System
+(function() {
+    let hasShownNotification = false;
+    let notificationCheckInterval;
+
+    // Check if notification has been shown recently (within 30 minutes)
+    function hasRecentNotification() {
+        const lastShown = localStorage.getItem('peauNotificationLastShown');
+        if (lastShown) {
+            const timeDiff = Date.now() - parseInt(lastShown);
+            return timeDiff < 30 * 60 * 1000; // 30 minutes
+        }
+        return false;
+    }
+
+    // Close notification popup
+    window.closeNotification = function() {
+        document.getElementById('notification-popup').style.display = 'none';
+    }
+
+    // Show notification with content
+    function showNotification(data) {
+        const popup = document.getElementById('notification-popup');
+        const content = document.getElementById('notification-content');
+        const productsDiv = document.getElementById('notification-products');
+        const productList = document.getElementById('notification-product-list');
+
+        // Set the message
+        content.innerHTML = data.suggestion || 'Check out our latest recommendations!';
+
+        // Handle recommended products
+        if (data.recommended_product_ids && data.recommended_product_ids.length > 0) {
+            productList.innerHTML = '';
+            data.recommended_product_ids.forEach(productId => {
+                const link = document.createElement('a');
+                link.href = '{{ $.baseUrl }}/product/' + productId;
+                link.style.cssText = 'padding: 6px 12px; background: #f0f0f0; border-radius: 6px; text-decoration: none; color: #4285f4; font-size: 12px;';
+                link.textContent = 'View Product ' + productId;
+                productList.appendChild(link);
+            });
+            productsDiv.style.display = 'block';
+        } else {
+            productsDiv.style.display = 'none';
+        }
+
+        // Play notification sound
+        try {
+            const audio = document.getElementById('notification-sound');
+            if (audio) {
+                audio.volume = 0.3;
+                audio.play().catch(e => console.log('Could not play notification sound:', e));
+            }
+        } catch (e) {
+            console.log('Audio error:', e);
+        }
+
+        // Show popup
+        popup.style.display = 'block';
+
+        // Show badge
+        const badge = document.getElementById('notification-badge');
+        if (badge) {
+            badge.style.display = 'inline-block';
+        }
+
+        // Mark as shown
+        localStorage.setItem('peauNotificationLastShown', Date.now().toString());
+        hasShownNotification = true;
+    }
+
+    // Fetch notification from PEAU agent
+    async function checkForNotification() {
+        // Only check once per page session and not if recently shown
+        if (hasShownNotification || hasRecentNotification()) {
+            return;
+        }
+
+        try {
+            // Get session ID from localStorage or cookie
+            const sessionId = localStorage.getItem('chatSessionId') || 'session_' + Date.now();
+
+            // Mock behavior events based on current page
+            const currentPath = window.location.pathname;
+            const events = [];
+
+            // Add page view event
+            events.push({
+                type: 'page_view',
+                path: currentPath,
+                timestamp: Date.now()
+            });
+
+            // If on a product page, add product view event
+            if (currentPath.includes('/product/')) {
+                const productId = currentPath.split('/product/')[1];
+                if (productId) {
+                    events.push({
+                        type: 'product_view',
+                        product_id: productId,
+                        timestamp: Date.now()
+                    });
+                }
+            }
+
+            const response = await fetch('{{ $.baseUrl }}/api/peau-notification', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: sessionId,
+                    events: events
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.suggestion && data.suggestion.trim() !== '') {
+                    showNotification(data);
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching PEAU notification:', error);
+        }
+    }
+
+    // Bell icon click handler
+    document.addEventListener('DOMContentLoaded', function() {
+        const bell = document.getElementById('notification-bell');
+        if (bell) {
+            bell.addEventListener('click', function(e) {
+                e.preventDefault();
+                // Hide badge when clicked
+                const badge = document.getElementById('notification-badge');
+                if (badge) {
+                    badge.style.display = 'none';
+                }
+                // Toggle popup
+                const popup = document.getElementById('notification-popup');
+                if (popup.style.display === 'none' || !popup.style.display) {
+                    // If no notification yet, fetch one
+                    if (!hasShownNotification) {
+                        checkForNotification();
+                    } else {
+                        popup.style.display = 'block';
+                    }
+                } else {
+                    popup.style.display = 'none';
+                }
+            });
+        }
+
+        // Check for notification after page loads (delay to not be intrusive)
+        setTimeout(checkForNotification, 5000);
+    });
 })();
 </script>
 

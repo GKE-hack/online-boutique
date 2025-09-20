@@ -665,6 +665,73 @@ func (fe *frontendServer) chatBotHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+func (fe *frontendServer) peauNotificationHandler(w http.ResponseWriter, r *http.Request) {
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+
+	// Check if PEAU agent is configured
+	if fe.peauAgentSvcAddr == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"has_suggestion": false,
+		})
+		return
+	}
+
+	// Parse the incoming request for user behavior context
+	var req map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to parse request body"), http.StatusBadRequest)
+		return
+	}
+
+	// Get user ID from session
+	s := r.Context().Value(sessionIDKey).(string)
+	userID := s // Use session ID as user ID
+
+	// Add user ID to request
+	req["user_id"] = userID
+
+	// Forward to PEAU agent service
+	peauURL := "http://" + fe.peauAgentSvcAddr + "/get_notification"
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to marshal request"), http.StatusInternalServerError)
+		return
+	}
+
+	// Create request to PEAU service
+	peauReq, err := http.NewRequest("POST", peauURL, bytes.NewBuffer(reqBody))
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create request"), http.StatusInternalServerError)
+		return
+	}
+	peauReq.Header.Set("Content-Type", "application/json")
+
+	// Forward the request with a short timeout
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(peauReq)
+	if err != nil {
+		// If PEAU service is not available, return no suggestion
+		log.WithError(err).Warn("PEAU agent not reachable")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"has_suggestion": false,
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to read response"), http.StatusInternalServerError)
+		return
+	}
+
+	// Forward the response
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
 func (fe *frontendServer) tryOnHandler(w http.ResponseWriter, r *http.Request) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	if err := r.ParseMultipartForm(20 << 20); err != nil { // 20MB

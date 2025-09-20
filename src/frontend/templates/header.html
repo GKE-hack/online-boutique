@@ -88,6 +88,12 @@
                     </a>
                     {{ end }}
 
+                    <!-- Notification Bell -->
+                    <a href="#" id="notification-bell" class="cart-link" style="position: relative;">
+                        <span style="font-size: 22px;" title="Notifications">🔔</span>
+                        <span id="notification-badge" class="cart-size-circle" style="display: none;">1</span>
+                    </a>
+
                     <a href="{{ $.baseUrl }}/cart" class="cart-link">
                         <img src="{{ $.baseUrl }}/static/icons/Hipster_CartIcon.svg" alt="Cart icon" class="logo" title="Cart" />
                         {{ if $.cart_size }}
