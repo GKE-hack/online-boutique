@@ -108,6 +108,20 @@
     <div id="alert-container"></div>
 </main>
 
+<!-- Terms and Conditions Modal -->
+<div id="terms-modal" class="terms-modal">
+    <div class="terms-modal-content">
+        <h2>Terms and Conditions</h2>
+        <p>Hello judges, please read the following terms and conditions carefully before using this feature.</p>
+        <ul>
+            <li>All generated content is for demonstration purposes only.</li>
+            <li>There is a rate limit of 10 videos per day per project id. So kindly refrain from abusing this feature.</li>
+            <li>This feature is only a Proof of Concept and is not meant to be used for production.</li>
+        </ul>
+        <button id="accept-terms-btn" class="btn btn-primary mt-3">I Understand & Accept</button>
+    </div>
+</div>
+
 <script>
 let selectedProduct = null;
 let currentJobId = null;
@@ -158,11 +172,12 @@ function displayProducts(products) {
     
     const html = products.map(product => `
         <div class="col-md-4 mb-3">
-            <div class="card product-card" style="cursor: pointer;" onclick="selectProduct('${product.id}', '${product.name}', '${product.description}', '${product.price}')">
+            <div class="card product-card" style="cursor: pointer;" onclick="selectProduct('${product.id}', '${product.name}', '${product.description}', '${product.price}', '${product.picture}')">
                 <div class="card-body">
                     <h6 class="card-title">${product.name}</h6>
+                    <img src="${product.picture}" alt="${product.name}" class="img-fluid mb-2" style="max-height: 100px; object-fit: contain;">
                     <p class="card-text small">${product.description.substring(0, 100)}...</p>
-                    <p class="card-text"><strong>${product.price}</strong></p>
+                    <p class="card-text"><strong>${product.price !== null ? `$${parseFloat(product.price).toFixed(2)}` : 'N/A'}</strong></p>
                     <small class="text-muted">${product.categories.join(', ')}</small>
                 </div>
             </div>
@@ -172,15 +187,18 @@ function displayProducts(products) {
     resultsContainer.innerHTML = html;
 }
 
-function selectProduct(id, name, description, price) {
-    selectedProduct = { id, name, description, price };
+function selectProduct(id, name, description, price, picture) {
+    selectedProduct = { id, name, description, price, picture };
     
     // Update selected product display
     document.getElementById('selected-product').innerHTML = `
-        <div class="alert alert-info">
-            <h5>Selected Product:</h5>
-            <strong>${name}</strong> - ${price}<br>
-            <small>${description}</small>
+        <div class="alert alert-info d-flex align-items-center">
+            <img src="${picture}" alt="${name}" class="img-fluid me-3" style="max-height: 80px; object-fit: contain;">
+            <div>
+                <h5>Selected Product:</h5>
+                <strong>${name}</strong> - ${price !== null ? `$${parseFloat(price).toFixed(2)}` : 'N/A'}<br>
+                <small>${description}</small>
+            </div>
         </div>
     `;
     
@@ -350,14 +368,94 @@ function resetForm() {
     document.getElementById('result-section').style.display = 'none';
 }
 
+// Terms and Conditions Logic
+const termsModal = document.getElementById('terms-modal');
+const acceptTermsBtn = document.getElementById('accept-terms-btn');
+const termsAcceptedKey = 'termsAcceptedAdminAds';
+
+function showTermsModal() {
+    termsModal.style.display = 'flex';
+}
+
+function hideTermsModal() {
+    termsModal.style.display = 'none';
+}
+
+function setTermsAccepted() {
+    localStorage.setItem(termsAcceptedKey, 'true');
+    hideTermsModal();
+}
+
+acceptTermsBtn.addEventListener('click', setTermsAccepted);
+
 // Load all products on page load
 window.addEventListener('load', () => {
+    // Existing load logic
     document.getElementById('product-search').value = '';
     searchProducts();
+
+    // Terms and Conditions check
+    console.log('Checking terms acceptance...');
+    const termsAccepted = localStorage.getItem(termsAcceptedKey);
+    console.log('Terms Accepted (localStorage):', termsAccepted);
+
+    if (!termsAccepted) {
+        showTermsModal();
+        console.log('Showing terms modal.');
+    } else {
+        hideTermsModal();
+        console.log('Terms already accepted, hiding modal.');
+    }
 });
 </script>
 
 <style>
+/* Terms and Conditions Modal Styles */
+.terms-modal {
+    display: none; /* Hidden by default */
+    position: fixed; /* Stay in place */
+    z-index: 2000; /* Sit on top */
+    left: 0;
+    top: 0;
+    width: 100%; /* Full width */
+    height: 100%; /* Full height */
+    overflow: auto; /* Enable scroll if needed */
+    background-color: rgba(0,0,0,0.6); /* Black w/ opacity */
+    align-items: center;
+    justify-content: center;
+}
+
+.terms-modal-content {
+    background-color: #fefefe;
+    margin: auto;
+    padding: 30px;
+    border-radius: 10px;
+    width: 80%;
+    max-width: 600px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    text-align: center;
+}
+
+.terms-modal-content h2 {
+    margin-bottom: 20px;
+    color: #333;
+}
+
+.terms-modal-content ul {
+    list-style: none;
+    padding: 0;
+    margin-bottom: 20px;
+    text-align: left;
+    color: #555;
+    list-style-type: disc; /* Ensure bullet points are visible */
+    margin-left: 20px; /* Add some left margin for the bullets */
+}
+
+.terms-modal-content ul li {
+    margin-bottom: 10px;
+    line-height: 1.5;
+}
+
 .product-card:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0,0,0,0.1);

@@ -43,14 +43,17 @@ def search_products():
         # Format products for frontend
         formatted_products = []
         for product in products:
-            price = product.get('price_usd', {})
-            price_display = f"${price.get('units', 0)}.{price.get('nanos', 0):02d}" if price else "N/A"
+            price_usd = product.get('price_usd', {})
+            price_value = None
+            if 'units' in price_usd and 'nanos' in price_usd:
+                # Convert price to a float for frontend processing
+                price_value = float(f"{price_usd['units']}.{price_usd['nanos']:09d}")
             
             formatted_products.append({
                 'id': product['id'],
                 'name': product['name'],
                 'description': product['description'],
-                'price': price_display,
+                'price': price_value, # Send as float or None
                 'categories': product.get('categories', []),
                 'picture': product.get('picture', '')
             })
