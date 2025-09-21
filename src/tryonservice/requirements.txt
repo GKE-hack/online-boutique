@@ -1,0 +1,6 @@
+google-generativeai==0.8.5
+Pillow
+python-dotenv
+fastapi
+uvicorn
+python-multipart

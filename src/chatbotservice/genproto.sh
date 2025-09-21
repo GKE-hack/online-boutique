@@ -1,4 +1,5 @@
-# Copyright 2022 Google LLC
+#!/bin/bash
+# Copyright 2024 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,18 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-- adservice.yaml
-- cartservice.yaml
-- chatbotservice.yaml
-- checkoutservice.yaml
-- currencyservice.yaml
-- emailservice.yaml
-- frontend.yaml
-- loadgenerator.yaml
-- paymentservice.yaml
-- productcatalogservice.yaml
-- recommendationservice.yaml
-- shippingservice.yaml
+set -e
+
+# Generate Python protobuf files
+python -m grpc_tools.protoc \
+    -I/protos \
+    -I/protos/grpc/health/v1 \
+    --python_out=. \
+    --grpc_python_out=. \
+    /protos/demo.proto \
+    /protos/grpc/health/v1/health.proto
+
+echo "Protobuf generation completed successfully" 

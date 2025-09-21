@@ -1,0 +1,167 @@
+# Copyright 2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatbotservice
+  labels:
+    app: chatbotservice
+spec:
+  selector:
+    matchLabels:
+      app: chatbotservice
+  template:
+    metadata:
+      labels:
+        app: chatbotservice
+    spec:
+      serviceAccountName: chatbotservice
+      terminationGracePeriodSeconds: 5
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+      - name: server
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          privileged: false
+          readOnlyRootFilesystem: true
+        image: chatbotservice
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 8081
+          name: grpc
+        env:
+        - name: PROJECT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: chatbot-config
+              key: project_id
+        - name: LOCATION
+          value: "us-central1"
+        - name: PRODUCT_CATALOG_SERVICE_ADDR
+          value: "productcatalogservice:3550"
+        - name: HTTP_PORT
+          value: "8080"
+        - name: GRPC_PORT
+          value: "8081"
+        - name: DISABLE_PROFILER
+          value: "1"
+        - name: PEAU_AGENT_MCP_ADDR
+          value: "peau-agent:8081" # Address of the PEAU Agent MCP server
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        volumeMounts:
+        - name: tmp-volume
+          mountPath: /tmp
+      volumes:
+      - name: tmp-volume
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatbotservice
+  labels:
+    app: chatbotservice
+spec:
+  type: ClusterIP
+  selector:
+    app: chatbotservice
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  - name: grpc
+    port: 8081
+    targetPort: 8081
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: chatbotservice
+  annotations:
+    iam.gke.io/gcp-service-account: chatbot-service@PROJECT_ID.iam.gserviceaccount.com
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chatbot-config
+data:
+  project_id: "gke-dev-471716"  # Replace with your Google Cloud project ID
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rag-sync-cronjob
+  labels:
+    app: rag-sync
+spec:
+  # Run every 10 minutes
+  schedule: "0 0 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: rag-sync
+            image: chatbotservice:v1.0.0-rag
+            imagePullPolicy: Never  # For minikube local images
+            command: ["/bin/sh", "-c"]
+            args:
+            - |
+              echo "Starting RAG sync..."
+              python auto_update_rag.py
+              echo "RAG sync completed"
+            env:
+            - name: PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: chatbot-config
+                  key: project_id
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m" 

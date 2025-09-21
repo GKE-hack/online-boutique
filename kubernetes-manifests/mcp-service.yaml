@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-service
+  labels:
+    app: mcp-service
+spec:
+  selector:
+    matchLabels:
+      app: mcp-service
+  template:
+    metadata:
+      labels:
+        app: mcp-service
+    spec:
+      serviceAccountName: default
+      terminationGracePeriodSeconds: 5
+      containers:
+      - name: server
+        image: mcp_service
+        ports:
+        - containerPort: 8080 # Flask HTTP port
+        env:
+        - name: PRODUCT_CATALOG_SERVICE_ADDR
+          value: "productcatalogservice:3550" # Existing product catalog service
+        - name: MCP_PORT
+          value: "8081" # MCP server will run on 8081
+        readinessProbe:
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          httpGet:
+            path: /health
+            port: 8080 # Health check endpoint exposed by Flask in main.py
+        livenessProbe:
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          httpGet:
+            path: /health
+            port: 8080 # Health check endpoint exposed by Flask in main.py
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 400m
+            memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-service
+  labels:
+    app: mcp-service
+spec:
+  type: ClusterIP
+  selector:
+    app: mcp-service
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  - name: mcp-tcp
+    port: 8081
+    targetPort: 8081

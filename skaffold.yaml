@@ -31,6 +31,10 @@ build:
     context: src/recommendationservice
   - image: shoppingassistantservice
     context: src/shoppingassistantservice
+  - image: chatbotservice
+    context: .
+    docker:
+      dockerfile: src/chatbotservice/Dockerfile
   - image: shippingservice
     context: src/shippingservice
   - image: checkoutservice
@@ -47,11 +51,23 @@ build:
     context: src/frontend
   - image: adservice
     context: src/adservice
+  - image: tryonservice
+    context: src/tryonservice
+  - image: mcp_service
+    context: .
+    docker:
+      dockerfile: src/mcp_service/Dockerfile
+  - image: peau_agent
+    context: src/peau_agent
+  - image: video_generation
+    context: .
+    docker:
+      dockerfile: src/video_generation/Dockerfile
   tagPolicy:
     gitCommit: {}
   local:
     useDockerCLI: true
-    useBuildkit: true
+    push: false
 manifests:
   kustomize:
     paths:

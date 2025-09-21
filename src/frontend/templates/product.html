@@ -23,7 +23,7 @@
 </div>
 
 <main role="main">
-  <div class="h-product container">
+  <div class="h-product container" data-product-id="{{$.product.Item.Id}}">
     <div class="row">
       <div class="col-md-6">
         <img class="product-image" alt="" src="{{ $.baseUrl }}{{$.product.Item.Picture}}" />
@@ -34,7 +34,6 @@
           <h2>{{ $.product.Item.Name }}</h2>
           <p class="product-price">{{ renderMoney $.product.Price }}</p>
           <p>{{ $.product.Item.Description }}</p>
-
           {{ if $.packagingInfo }}
           <div class="product-packaging">
             <h3>Packaging</h3>
@@ -68,6 +67,173 @@
             </div>
             <button type="submit" class="cymbal-button-primary">Add To Cart</button>
           </form>
+
+          <hr/>
+          <div id="tryon-section" class="mt-3">
+            {{ $category := index $.product.Item.Categories 0 }}
+            {{ if or (eq $category "accessories") (eq $category "clothing") (eq $category "footwear") }}
+              <h3>Virtual Try-On</h3>
+            <form id="tryon-form" enctype="multipart/form-data" onsubmit="return false;">
+              <input type="hidden" name="product_id" value="{{$.product.Item.Id}}" />
+              <input type="hidden" name="category" value="{{index $.product.Item.Categories 0}}" />
+              <div class="mb-2">
+                <label for="base_image">Upload your photo</label>
+                <input id="base_image" name="base_image" type="file" accept="image/*" required />
+              </div>
+                <button id="tryon-submit" class="cymbal-button-primary" type="button">Try on me</button>
+              <span id="tryon-status" style="margin-left:8px; min-width: 18px; display: inline-block;" aria-live="polite"></span>
+            </form>
+            {{ end }}
+            <div id="tryon-result" class="mt-3" style="display:none;">
+              <h4>Result</h4>
+              <img id="tryon-image" alt="Try-on result" style="max-width:100%;height:auto;border:1px solid #ddd;"/>
+            </div>
+
+            <!-- Try-on Result Modal -->
+            <style>
+              /* Minimal, self-contained modal styles */
+              .tryon-modal { position: fixed; inset: 0; display: none; z-index: 1050; }
+              .tryon-modal.show { display: block; }
+              .tryon-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.6); }
+              .tryon-dialog { position: relative; margin: 5vh auto; max-width: 90vw; max-height: 90vh; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.35); }
+              .tryon-header { position: absolute; top: 8px; right: 8px; z-index: 1; }
+              .tryon-close { border: none; background: rgba(0,0,0,0.65); color: #fff; font-size: 22px; line-height: 1; width: 36px; height: 36px; border-radius: 18px; cursor: pointer; }
+              .tryon-body { padding: 0; }
+              .tryon-body img { display: block; max-width: 90vw; max-height: 85vh; height: auto; width: 100%; object-fit: contain; background: #000; }
+            </style>
+            <div id="tryon-modal" class="tryon-modal" aria-hidden="true">
+              <div class="tryon-backdrop" data-dismiss="tryon-modal" aria-hidden="true"></div>
+              <div class="tryon-dialog" role="dialog" aria-modal="true" aria-label="Try-on result">
+                <div class="tryon-header">
+                  <button id="tryon-close" class="tryon-close" type="button" aria-label="Close">×</button>
+                </div>
+                <div class="tryon-body">
+                  <img id="tryon-modal-image" alt="Try-on result" />
+                </div>
+              </div>
+            </div>
+
+            <script>
+              (function(){
+                const form = document.getElementById('tryon-form');
+                const submitBtn = document.getElementById('tryon-submit');
+                const statusEl = document.getElementById('tryon-status');
+                const resultWrap = document.getElementById('tryon-result');
+                const resultImg = document.getElementById('tryon-image');
+                const section = document.getElementById('tryon-section');
+
+                // Modal elements
+                const modal = document.getElementById('tryon-modal');
+                const modalImg = document.getElementById('tryon-modal-image');
+                const closeBtn = document.getElementById('tryon-close');
+                const backdrop = modal && modal.querySelector('.tryon-backdrop');
+
+                function openModal() {
+                  if (!modal) return;
+                  modal.classList.add('show');
+                  modal.setAttribute('aria-hidden', 'false');
+                  // Prevent background scroll while modal open
+                  document.body.style.overflow = 'hidden';
+                  closeBtn && closeBtn.focus();
+                }
+
+                function closeModal() {
+                  if (!modal) return;
+                  modal.classList.remove('show');
+                  modal.setAttribute('aria-hidden', 'true');
+                  document.body.style.overflow = '';
+                }
+
+                closeBtn && closeBtn.addEventListener('click', closeModal);
+                backdrop && backdrop.addEventListener('click', closeModal);
+                window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+                async function doTryOn() {
+                  // Show small loader while processing (inline SVG so it doesn't rely on external CSS)
+                  statusEl.innerHTML = '<svg width="18" height="18" viewBox="0 0 50 50" role="status" aria-label="Loading" style="vertical-align:middle; margin-left:8px;">\
+                    <circle cx="25" cy="25" r="20" stroke="#d9d9d9" stroke-width="6" fill="none"/>\
+                    <path d="M25 5 a20 20 0 0 1 0 40" stroke="#CE0631" stroke-width="6" fill="none">\
+                      <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"/>\
+                    </path>\
+                  </svg>';
+                  // Yield to the browser so it can paint the spinner before starting work
+                  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+                  submitBtn.disabled = true;
+                  try {
+                    // Client-side validation: ensure a file is selected
+                    const fileInput = document.getElementById('base_image');
+                    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+                      statusEl.innerHTML = '';
+                      statusEl.textContent = 'Please select an image to upload.';
+                      return;
+                    }
+
+                    const fd = new FormData(form);
+                    const res = await fetch('{{ $.baseUrl }}/tryon', {
+                      method: 'POST',
+                      headers: { 'Accept': 'application/json' },
+                      body: fd
+                    });
+                    if (!res.ok) {
+                      let friendly = 'Something went wrong. Please try again.';
+                      // Prefer friendly messages for common cases
+                      if (res.status === 400) {
+                        friendly = 'Please select an image to upload.';
+                      } else if (res.status === 413) {
+                        friendly = 'The selected file is too large. Please choose a smaller image.';
+                      } else if (res.status === 502 || res.status === 503 || res.status === 504) {
+                        friendly = 'Try-on service is temporarily unavailable. Please try again later.';
+                      }
+
+                      try {
+                        const ct = res.headers.get('Content-Type') || '';
+                        if (ct.includes('application/json')) {
+                          const data = await res.json();
+                          const serverMsg = data && (data.message || data.error);
+                          if (serverMsg) friendly = serverMsg;
+                        }
+                      } catch(_) { /* ignore JSON parse issues */ }
+
+                      throw new Error(friendly);
+                    }
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+
+                    // Populate and show modal instead of inline result
+                    if (modalImg) {
+                      modalImg.src = url;
+                    }
+                    // Keep inline result hidden to avoid duplication
+                    if (resultWrap) {
+                      resultWrap.style.display = 'none';
+                    }
+                    openModal();
+
+                    statusEl.textContent = '';
+                  } catch (err) {
+                    console.error(err);
+                    statusEl.innerHTML = '';
+                    statusEl.textContent = (err && err.message) ? err.message : 'Failed to generate try-on image.';
+                  } finally {
+                    submitBtn.disabled = false;
+                  }
+                }
+
+                submitBtn && submitBtn.addEventListener('click', doTryOn);
+
+                // Auto-focus this section if tryon=1 is present
+                try {
+                  const usp = new URLSearchParams(window.location.search);
+                  if (usp.get('tryon') === '1' && section) {
+                    section.scrollIntoView({behavior: 'smooth', block: 'start'});
+                  }
+                } catch (e) {}
+              })();
+            </script>
+          </div>
+
+          <script>
+          </script>
         </div>
       </div>
     </div>

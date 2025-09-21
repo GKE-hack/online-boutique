@@ -1,4 +1,4 @@
-// Copyright 2018 Google LLC
+﻿// Copyright 2018 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,6 +32,9 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
+	"bytes"
+	"mime/multipart"
+
 	pb "github.com/GoogleCloudPlatform/microservices-demo/src/frontend/genproto"
 	"github.com/GoogleCloudPlatform/microservices-demo/src/frontend/money"
 	"github.com/GoogleCloudPlatform/microservices-demo/src/frontend/validator"
@@ -50,15 +53,100 @@ var (
 				Funcs(template.FuncMap{
 			"renderMoney":        renderMoney,
 			"renderCurrencyLogo": renderCurrencyLogo,
+			"hasAnyCategory":     hasAnyCategory,
 		}).ParseGlob("templates/*.html"))
 	plat platformDetails
 )
 
 var validEnvs = []string{"local", "gcp", "azure", "aws", "onprem", "alibaba"}
 
+// trackBehavior sends user behavior events to the PEAU Agent for proactive engagement
+func (fe *frontendServer) trackBehavior(ctx context.Context, userID string, eventType string, productID string) {
+	if fe.peauAgentSvcAddr == "" {
+		return // Skip if PEAU agent not configured
+	}
+
+	event := map[string]interface{}{
+		"user_id": userID,
+		"events": []map[string]interface{}{
+			{
+				"type":       eventType,
+				"product_id": productID,
+				"timestamp":  time.Now().Format(time.RFC3339),
+			},
+		},
+	}
+
+	reqBody, err := json.Marshal(event)
+	if err != nil {
+		return // Skip on marshal error
+	}
+
+	peauURL := "http://" + fe.peauAgentSvcAddr + "/track_behavior"
+
+	// Get session ID from context for notification storage
+	sessionID := ctx.Value(ctxKeySessionID{}).(string)
+
+	// Send asynchronously to avoid blocking the main request
+	go func() {
+		client := &http.Client{Timeout: 20 * time.Second}
+		resp, err := client.Post(peauURL, "application/json", strings.NewReader(string(reqBody)))
+		if err != nil {
+			// Log error but don't fail the main request
+			log := logrus.WithField("service", "peau-agent")
+			log.WithError(err).Warn("failed to track behavior")
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			log := logrus.WithField("service", "peau-agent")
+			log.WithField("status", resp.StatusCode).Warn("behavior tracking returned non-200 status")
+			return
+		}
+
+		// Read and parse the response to check for notifications
+		respBody, err := io.ReadAll(resp.Body)
+		log.WithField("response", string(respBody)).Info("PEAU agent response")
+		if err != nil {
+			log := logrus.WithField("service", "peau-agent")
+			log.WithError(err).Warn("failed to read PEAU agent response")
+			return
+		}
+
+		var peauResponse map[string]interface{}
+		if err := json.Unmarshal(respBody, &peauResponse); err != nil {
+			log := logrus.WithField("service", "peau-agent")
+			log.WithError(err).Warn("failed to parse PEAU agent response")
+			return
+		}
+
+		// Check if there's a suggestion in the response
+		if suggestionData, exists := peauResponse["suggestion_data"]; exists && suggestionData != nil {
+			if suggestionMap, ok := suggestionData.(map[string]interface{}); ok {
+				if message, exists := suggestionMap["suggestion"]; exists {
+					if messageStr, ok := message.(string); ok && messageStr != "" {
+						// Store the notification
+						fe.notifications.AddNotification(sessionID, userID, messageStr)
+
+						log := logrus.WithField("service", "peau-agent")
+						log.WithField("user_id", userID).WithField("session_id", sessionID).Info("stored PEAU agent suggestion as notification")
+					}
+				}
+			}
+		}
+	}()
+}
+
 func (fe *frontendServer) homeHandler(w http.ResponseWriter, r *http.Request) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
 	log.WithField("currency", currentCurrency(r)).Info("home")
+
+	isAdmin := (r.URL.Path == baseUrl+"/admin")
+
+	// New variable for explicitly authenticated admin access
+	isAuthenticatedAdmin := isAdmin // For this feature, isAdmin implies authenticated admin
+
 	currencies, err := fe.getCurrencies(r.Context())
 	if err != nil {
 		renderHTTPError(log, r, w, errors.Wrap(err, "could not retrieve currencies"), http.StatusInternalServerError)
@@ -108,12 +196,14 @@ func (fe *frontendServer) homeHandler(w http.ResponseWriter, r *http.Request) {
 	plat.setPlatformDetails(strings.ToLower(env))
 
 	if err := templates.ExecuteTemplate(w, "home", injectCommonTemplateData(r, map[string]interface{}{
-		"show_currency": true,
-		"currencies":    currencies,
-		"products":      ps,
-		"cart_size":     cartSize(cart),
-		"banner_color":  os.Getenv("BANNER_COLOR"), // illustrates canary deployments
-		"ad":            fe.chooseAd(r.Context(), []string{}, log),
+		"show_currency":        true,
+		"currencies":           currencies,
+		"products":             ps,
+		"cart_size":            cartSize(cart),
+		"banner_color":         os.Getenv("BANNER_COLOR"), // illustrates canary deployments
+		"ad":                   fe.chooseAd(r.Context(), []string{}, log),
+		"IsAdmin":              isAdmin,
+		"IsAuthenticatedAdmin": isAuthenticatedAdmin,
 	})); err != nil {
 		log.Error(err)
 	}
@@ -150,6 +240,9 @@ func (fe *frontendServer) productHandler(w http.ResponseWriter, r *http.Request)
 	}
 	log.WithField("id", id).WithField("currency", currentCurrency(r)).
 		Debug("serving product page")
+
+	// Track product view behavior for PEAU Agent
+	fe.trackBehavior(r.Context(), sessionID(r), "product_viewed", id)
 
 	p, err := fe.getProduct(r.Context(), id)
 	if err != nil {
@@ -232,7 +325,11 @@ func (fe *frontendServer) addToCartHandler(w http.ResponseWriter, r *http.Reques
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to add to cart"), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("location", baseUrl + "/cart")
+
+	// Track add to cart behavior for PEAU Agent
+	fe.trackBehavior(r.Context(), sessionID(r), "item_added_to_cart", payload.ProductID)
+
+	w.Header().Set("location", baseUrl+"/cart")
 	w.WriteHeader(http.StatusFound)
 }
 
@@ -244,7 +341,7 @@ func (fe *frontendServer) emptyCartHandler(w http.ResponseWriter, r *http.Reques
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to empty cart"), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("location", baseUrl + "/")
+	w.Header().Set("location", baseUrl+"/")
 	w.WriteHeader(http.StatusFound)
 }
 
@@ -423,7 +520,7 @@ func (fe *frontendServer) logoutHandler(w http.ResponseWriter, r *http.Request) 
 		c.MaxAge = -1
 		http.SetCookie(w, c)
 	}
-	w.Header().Set("Location", baseUrl + "/")
+	w.Header().Set("Location", baseUrl+"/")
 	w.WriteHeader(http.StatusFound)
 }
 
@@ -448,52 +545,259 @@ func (fe *frontendServer) getProductByID(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusOK)
 }
 
-func (fe *frontendServer) chatBotHandler(w http.ResponseWriter, r *http.Request) {
+func (fe *frontendServer) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
-	type Response struct {
-		Message string `json:"message"`
+
+	// Parse the incoming request
+	var req map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to parse request body"), http.StatusBadRequest)
+		return
 	}
 
-	type LLMResponse struct {
-		Content string         `json:"content"`
-		Details map[string]any `json:"details"`
+	// Forward to chatbot service streaming endpoint
+	chatbotURL := "http://" + fe.chatbotSvcAddr + "/chat/stream"
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to marshal request"), http.StatusInternalServerError)
+		return
 	}
 
-	var response LLMResponse
-
-	url := "http://" + fe.shoppingAssistantSvcAddr
-	req, err := http.NewRequest(http.MethodPost, url, r.Body)
+	// Create request to chatbot service
+	chatReq, err := http.NewRequest("POST", chatbotURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create request"), http.StatusInternalServerError)
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	res, err := http.DefaultClient.Do(req)
+	chatReq.Header.Set("Content-Type", "application/json")
+
+	// Forward the request
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(chatReq)
 	if err != nil {
-		renderHTTPError(log, r, w, errors.Wrap(err, "failed to send request"), http.StatusInternalServerError)
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to contact chatbot service"), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Create a flusher first before setting headers
+	// flusher, ok := w.(http.Flusher)
+	// if !ok {
+	// 	renderHTTPError(log, r, w, errors.New("streaming unsupported"), http.StatusInternalServerError)
+	// 	return
+	// }
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Stream the response
+	buffer := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buffer)
+		if n > 0 {
+			if _, writeErr := w.Write(buffer[:n]); writeErr != nil {
+				log.WithError(writeErr).Error("failed to write streaming response")
+				return
+			}
+			// If flusher is available, flush it. This is a best-effort approach.
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+		if err != nil {
+			if err != io.EOF {
+				log.WithError(err).Error("error reading streaming response")
+			}
+			break
+		}
+	}
+}
+
+func (fe *frontendServer) chatBotHandler(w http.ResponseWriter, r *http.Request) {
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+
+	type ChatRequest struct {
+		Message string   `json:"message"`
+		History []string `json:"history,omitempty"`
+		Image   string   `json:"image,omitempty"`
+	}
+
+	type ChatResponse struct {
+		Success                 bool     `json:"success"`
+		Response                string   `json:"response"`
+		RecommendedProducts     []string `json:"recommended_products"`
+		TotalProductsConsidered int      `json:"total_products_considered"`
+	}
+
+	type FrontendResponse struct {
+		Message string `json:"message"`
+	}
+
+	// Parse the incoming request
+	var req ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to parse request body"), http.StatusBadRequest)
 		return
 	}
 
+	// Prepare request for chatbot service
+	chatbotURL := "http://" + fe.chatbotSvcAddr + "/chat"
+	reqBody, err := json.Marshal(map[string]interface{}{
+		"message": req.Message,
+		"history": req.History,
+	})
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to marshal request"), http.StatusInternalServerError)
+		return
+	}
+
+	// Make request to chatbot service
+	httpReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, chatbotURL, strings.NewReader(string(reqBody)))
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create request"), http.StatusInternalServerError)
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	res, err := client.Do(httpReq)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to send request to chatbot service"), http.StatusInternalServerError)
+		return
+	}
+	defer res.Body.Close()
+
+	// Read response from chatbot service
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to read response"), http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Printf("%+v\n", body)
-	fmt.Printf("%+v\n", res)
-
-	err = json.Unmarshal(body, &response)
-	if err != nil {
-		renderHTTPError(log, r, w, errors.Wrap(err, "failed to unmarshal body"), http.StatusInternalServerError)
+	// Parse chatbot service response
+	var chatbotResponse ChatResponse
+	if err := json.Unmarshal(body, &chatbotResponse); err != nil {
+		log.WithField("response_body", string(body)).Error("failed to unmarshal chatbot response")
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to unmarshal chatbot response"), http.StatusInternalServerError)
 		return
 	}
 
-	// respond with the same message
-	json.NewEncoder(w).Encode(Response{Message: response.Content})
+	// Log the interaction for monitoring
+	log.WithFields(logrus.Fields{
+		"user_message":              req.Message,
+		"bot_response_length":       len(chatbotResponse.Response),
+		"recommended_products":      chatbotResponse.RecommendedProducts,
+		"total_products_considered": chatbotResponse.TotalProductsConsidered,
+	}).Info("chatbot interaction")
 
+	// Return response in the format expected by the frontend
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(FrontendResponse{Message: chatbotResponse.Response}); err != nil {
+		log.Error("failed to encode response:", err)
+	}
+}
+
+func (fe *frontendServer) tryOnHandler(w http.ResponseWriter, r *http.Request) {
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+	if err := r.ParseMultipartForm(20 << 20); err != nil { // 20MB
+		renderHTTPError(log, r, w, errors.Wrap(err, "invalid form"), http.StatusBadRequest)
+		return
+	}
+
+	productID := r.FormValue("product_id")
+	category := r.FormValue("category")
+	if productID == "" {
+		renderHTTPError(log, r, w, errors.New("missing product_id"), http.StatusBadRequest)
+		return
+	}
+
+	// Retrieve product to resolve product image path
+	p, err := fe.getProduct(r.Context(), productID)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "could not retrieve product"), http.StatusInternalServerError)
+		return
+	}
+
+	// Open product image from local static directory
+	productPath := "." + p.GetPicture()
+	pf, err := os.Open(productPath)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrapf(err, "failed to open product image: %s", productPath), http.StatusInternalServerError)
+		return
+	}
+	defer pf.Close()
+
+	// Read uploaded human image
+	hf, header, err := r.FormFile("base_image")
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "missing base_image file"), http.StatusBadRequest)
+		return
+	}
+	defer hf.Close()
+
+	// Build multipart payload to try-on service
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	// product image part
+	pw, err := mw.CreateFormFile("product_image", "product"+filepathExtSafe(productPath))
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create part"), http.StatusInternalServerError)
+		return
+	}
+	if _, err := io.Copy(pw, pf); err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to copy product image"), http.StatusInternalServerError)
+		return
+	}
+	// human image part
+	hw, err := mw.CreateFormFile("base_image", header.Filename)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create part"), http.StatusInternalServerError)
+		return
+	}
+	if _, err := io.Copy(hw, hf); err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to copy base image"), http.StatusInternalServerError)
+		return
+	}
+
+	// category part
+	mw.WriteField("category", category)
+	mw.Close()
+
+	url := "http://" + fe.tryOnSvcAddr + "/tryon"
+	req, err := http.NewRequest(http.MethodPost, url, &body)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to create request"), http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "failed to call try-on service"), http.StatusBadGateway)
+		return
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(res.Body)
+		renderHTTPError(log, r, w, errors.Errorf("try-on service error: %s", string(b)), res.StatusCode)
+		return
+	}
+
+	// proxy image back to client
+	w.Header().Set("Content-Type", res.Header.Get("Content-Type"))
 	w.WriteHeader(http.StatusOK)
+	io.Copy(w, res.Body)
+}
+
+func filepathExtSafe(path string) string {
+	idx := strings.LastIndex(path, ".")
+	if idx == -1 || idx < len(path)-5 { // simple guard
+		return ".png"
+	}
+	return path[idx:]
 }
 
 func (fe *frontendServer) setCurrencyHandler(w http.ResponseWriter, r *http.Request) {
@@ -537,6 +841,22 @@ func renderHTTPError(log logrus.FieldLogger, r *http.Request, w http.ResponseWri
 	log.WithField("error", err).Error("request error")
 	errMsg := fmt.Sprintf("%+v", err)
 
+	// If client prefers JSON, return structured error
+	accept := r.Header.Get("Accept")
+	if strings.Contains(accept, "application/json") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		// Keep payload simple and predictable for FE
+		payload := map[string]any{
+			"status":      http.StatusText(code),
+			"status_code": code,
+			"message":     userFacingMessage(code, errMsg),
+			"error":       errMsg,
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+		return
+	}
+
 	w.WriteHeader(code)
 
 	if templateErr := templates.ExecuteTemplate(w, "error", injectCommonTemplateData(r, map[string]interface{}{
@@ -545,6 +865,23 @@ func renderHTTPError(log logrus.FieldLogger, r *http.Request, w http.ResponseWri
 		"status":      http.StatusText(code),
 	})); templateErr != nil {
 		log.Println(templateErr)
+	}
+}
+
+// userFacingMessage maps common error codes to simpler, friendly messages displayed in the FE.
+func userFacingMessage(code int, fallback string) string {
+	switch code {
+	case http.StatusBadRequest:
+		return "Please select an image to upload."
+	case http.StatusRequestEntityTooLarge:
+		return "The selected file is too large. Please choose a smaller image."
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return "Try-on service is temporarily unavailable. Please try again later."
+	default:
+		if fallback != "" {
+			return fallback
+		}
+		return "Something went wrong. Please try again."
 	}
 }
 
@@ -561,6 +898,7 @@ func injectCommonTemplateData(r *http.Request, payload map[string]interface{}) m
 		"frontendMessage":   frontendMessage,
 		"currentYear":       time.Now().Year(),
 		"baseUrl":           baseUrl,
+		"IsSignedIn":        isUserSignedIn(r),
 	}
 
 	for k, v := range payload {
@@ -632,4 +970,226 @@ func stringinSlice(slice []string, val string) bool {
 		}
 	}
 	return false
+}
+
+// hasAnyCategory returns true if any of the target category strings are present in the
+// provided categories slice. Comparison is case-insensitive.
+func hasAnyCategory(categories []string, targets ...string) bool {
+	if len(categories) == 0 || len(targets) == 0 {
+		return false
+	}
+	m := make(map[string]struct{}, len(categories))
+	for _, c := range categories {
+		m[strings.ToLower(c)] = struct{}{}
+	}
+	for _, t := range targets {
+		if _, ok := m[strings.ToLower(t)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func isUserSignedIn(r *http.Request) bool {
+	return sessionID(r) != ""
+}
+
+// Video Generation Handlers
+
+func (fe *frontendServer) generateAdsHandler(w http.ResponseWriter, r *http.Request) {
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+
+	isAdmin := (r.URL.Path == baseUrl+"/admin/generate-ads")
+
+	if err := templates.ExecuteTemplate(w, "generate-ads", injectCommonTemplateData(r, map[string]interface{}{
+		"IsAdmin": isAdmin,
+	})); err != nil {
+		log.Println(err)
+	}
+}
+
+func (fe *frontendServer) searchProductsForAdsHandler(w http.ResponseWriter, r *http.Request) {
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+	query := r.URL.Query().Get("q")
+
+	// Call video generation service to search products
+	searchURL := fmt.Sprintf("http://%s/products/search?q=%s", fe.videoGenerationSvcAddr, query)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(searchURL)
+	if err != nil {
+		log.WithError(err).Error("failed to search products for ads")
+		http.Error(w, "Failed to search products", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.WithError(err).Error("failed to read search response")
+		http.Error(w, "Failed to read response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+func (fe *frontendServer) generateVideoHandler(w http.ResponseWriter, r *http.Request) {
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+
+	var req struct {
+		ProductID string `json:"product_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.WithError(err).Error("failed to decode generate video request")
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Call video generation service
+	generateURL := fmt.Sprintf("http://%s/generate-ad", fe.videoGenerationSvcAddr)
+	reqBody, _ := json.Marshal(map[string]string{"product_id": req.ProductID})
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Post(generateURL, "application/json", strings.NewReader(string(reqBody)))
+	if err != nil {
+		log.WithError(err).Error("failed to start video generation")
+		http.Error(w, "Failed to start video generation", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.WithError(err).Error("failed to read generate response")
+		http.Error(w, "Failed to read response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+func (fe *frontendServer) videoStatusHandler(w http.ResponseWriter, r *http.Request) {
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+	jobID := mux.Vars(r)["job_id"]
+
+	// Call video generation service to check status
+	statusURL := fmt.Sprintf("http://%s/video-status/%s", fe.videoGenerationSvcAddr, jobID)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(statusURL)
+	if err != nil {
+		log.WithError(err).Error("failed to check video status")
+		http.Error(w, "Failed to check status", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.WithError(err).Error("failed to read status response")
+		http.Error(w, "Failed to read response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+func (fe *frontendServer) validateVideoHandler(w http.ResponseWriter, r *http.Request) {
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+
+	var req struct {
+		JobID    string `json:"job_id"`
+		Approved bool   `json:"approved"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.WithError(err).Error("failed to decode validate video request")
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Call video generation service to validate
+	validateURL := fmt.Sprintf("http://%s/validate-video", fe.videoGenerationSvcAddr)
+	reqBody, _ := json.Marshal(req)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(validateURL, "application/json", strings.NewReader(string(reqBody)))
+	if err != nil {
+		log.WithError(err).Error("failed to validate video")
+		http.Error(w, "Failed to validate video", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.WithError(err).Error("failed to read validate response")
+		http.Error(w, "Failed to read response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+func (fe *frontendServer) serveVideoHandler(w http.ResponseWriter, r *http.Request) {
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+	filename := mux.Vars(r)["filename"]
+
+	// Proxy video request to video generation service
+	videoURL := fmt.Sprintf("http://%s/video/%s", fe.videoGenerationSvcAddr, filename)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(videoURL)
+	if err != nil {
+		log.WithError(err).Error("failed to fetch video")
+		http.Error(w, "Failed to fetch video", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy headers
+	for k, v := range resp.Header {
+		w.Header()[k] = v
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	// Copy body
+	io.Copy(w, resp.Body)
+}
+
+// getNotificationsHandler returns all notifications for the current session
+func (fe *frontendServer) getNotificationsHandler(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.Context().Value(ctxKeySessionID{}).(string)
+	fmt.Println("sessionID", sessionID)
+	notifications := fe.notifications.GetNotifications(sessionID)
+	fmt.Println("notifications", notifications)
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(notifications); err != nil {
+		http.Error(w, "Failed to encode notifications", http.StatusInternalServerError)
+		return
+	}
+}
+
+// markNotificationReadHandler marks a notification as read
+func (fe *frontendServer) markNotificationReadHandler(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.Context().Value(ctxKeySessionID{}).(string)
+
+	vars := mux.Vars(r)
+	notificationID := vars["id"]
+
+	if notificationID == "" {
+		http.Error(w, "Notification ID is required", http.StatusBadRequest)
+		return
+	}
+
+	fe.notifications.MarkAsRead(sessionID, notificationID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }

@@ -17,6 +17,7 @@ kind: Kustomization
 resources:
  - adservice.yaml
  - cartservice.yaml
+ - chatbotservice.yaml
  - checkoutservice.yaml
  - currencyservice.yaml
  - emailservice.yaml
@@ -26,6 +27,10 @@ resources:
  - productcatalogservice.yaml
  - recommendationservice.yaml
  - shippingservice.yaml
+ - tryonservice.yaml
+ - mcp-service.yaml
+ - peau-agent.yaml
+ - video-generation.yaml
 # components:
 # - ../kustomize/components/cymbal-branding
 # - ../kustomize/components/google-cloud-operations
