@@ -134,7 +134,7 @@ class PEAUAgent:
             raise
 
         # Initialize generic MCP client for tools (requests-based)
-        generic_mcp_addr = os.getenv('GENERIC_MCP_SERVICE_ADDR', 'localhost:8080')
+        generic_mcp_addr = os.getenv('MCP_SERVICE_ADDR', 'localhost:8080')
         logger.info(f"Connecting to generic MCP service for HTTP at: {generic_mcp_addr}")
         self.generic_mcp_client = GenericMCPClient(generic_mcp_addr)
         _global_mcp_client = self.generic_mcp_client  # Set global for tool function

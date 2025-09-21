@@ -1,23 +1,23 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: generic-mcp-service
+  name: mcp-service
   labels:
-    app: generic-mcp-service
+    app: mcp-service
 spec:
   selector:
     matchLabels:
-      app: generic-mcp-service
+      app: mcp-service
   template:
     metadata:
       labels:
-        app: generic-mcp-service
+        app: mcp-service
     spec:
       serviceAccountName: default
       terminationGracePeriodSeconds: 5
       containers:
       - name: server
-        image: generic_mcp_service
+        image: mcp_service
         ports:
         - containerPort: 8080 # Flask HTTP port
         env:
@@ -48,13 +48,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: generic-mcp-service
+  name: mcp-service
   labels:
-    app: generic-mcp-service
+    app: mcp-service
 spec:
   type: ClusterIP
   selector:
-    app: generic-mcp-service
+    app: mcp-service
   ports:
   - name: http
     port: 8080
