@@ -197,6 +197,7 @@ class PEAUAgent:
                 # Check if view threshold is met (5+ views)
                 if product_state["views"] >= 5 and not product_state["added_to_cart"]:
                     logger.info(f"User {user_id} viewed product {product_id} {product_state['views']} times - triggering hesitation message")
+                    product_state["views"] = 0 # Reset view counter after triggering hesitation message
                     return self._generate_hesitation_message(user_id, product_id)
                     
             elif event_type == "item_added_to_cart":
@@ -237,7 +238,7 @@ Create a flirty message that includes:
 
 2. Then add the product description and benefits to explain why it's amazing
 
-3. Include the product ID [{product_id}] in the message
+3. Include the product ID in the message in the format [PRODUCT_ID] as a placeholder.
 
 Style: Start flirty and playful, then highlight the product's features from the description
 Use emojis and make it feel like the product has feelings
@@ -271,7 +272,9 @@ Create a SHORT message (2-3 sentences max) that:
 
 Style: Enthusiastic, brief, emoji-friendly
 Keep the whole message under 25 words
-Focus on product IDs from the search tool results"""
+Focus on product IDs from the search tool results
+Strictly include the product IDs in the format [PRODUCT_ID] as placeholders.
+"""
 
         return self._execute_suggestion_generation(user_id, prompt)
 

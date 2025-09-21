@@ -89,7 +89,7 @@ func (fe *frontendServer) trackBehavior(ctx context.Context, userID string, even
 
 	// Send asynchronously to avoid blocking the main request
 	go func() {
-		client := &http.Client{Timeout: 5 * time.Second}
+		client := &http.Client{Timeout: 20 * time.Second}
 		resp, err := client.Post(peauURL, "application/json", strings.NewReader(string(reqBody)))
 		if err != nil {
 			// Log error but don't fail the main request
