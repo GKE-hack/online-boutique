@@ -17,7 +17,7 @@ kind: Config
 metadata:
   name: app
 build:
-  platforms: ["linux/amd64"]
+  platforms: ["linux/amd64", "linux/arm64"]
   artifacts:
   # image tags are relative; to specify an image repo (e.g. GCR), you
   # must provide a "default repo" using one of the methods described
@@ -53,10 +53,10 @@ build:
     context: src/adservice
   - image: tryonservice
     context: src/tryonservice
-  - image: generic_mcp_service
+  - image: mcp_service
     context: .
     docker:
-      dockerfile: src/generic_mcp_service/Dockerfile
+      dockerfile: src/mcp_service/Dockerfile
   - image: peau_agent
     context: src/peau_agent
   - image: video_generation
@@ -101,26 +101,31 @@ profiles:
   - op: add
     path: /manifests/kustomize/paths/1
     value: kustomize/components/network-policies
-# DISABLED: LoadGenerator commented out to avoid triggering behavior tracking during development
-# Uncomment when you want to test with simulated load
-# ---
-# apiVersion: skaffold/v3
-# kind: Config
-# metadata:
-#   name: loadgenerator
-# requires:
-# - configs:
-#   - app
-# build:
-#   platforms: ["linux/amd64", "linux/arm64"]
-#   artifacts:
-#   - image: loadgenerator
-#     context: src/loadgenerator
-#   local:
-#     useDockerCLI: true
-#     useBuildkit: true
-# manifests:
-#   rawYaml:
-#   - ./kubernetes-manifests/loadgenerator.yaml
-# deploy:
-#   kubectl: {}
+---
+apiVersion: skaffold/v3
+kind: Config
+metadata:
+  name: loadgenerator
+requires:
+- configs:
+  - app
+build:
+  platforms: ["linux/amd64", "linux/arm64"]
+  artifacts:
+  - image: loadgenerator
+    context: src/loadgenerator
+  local:
+    useDockerCLI: true
+    useBuildkit: true
+manifests:
+  rawYaml:
+  - ./kubernetes-manifests/loadgenerator.yaml
+deploy:
+  kubectl: {}
+profiles:
+- name: gcb
+  build:
+    googleCloudBuild:
+      diskSizeGb: 300
+      machineType: N1_HIGHCPU_32
+      timeout: 4000s

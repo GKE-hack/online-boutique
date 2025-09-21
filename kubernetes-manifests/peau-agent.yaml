@@ -26,8 +26,8 @@ spec:
           value: "gke-dev-471716" # Replace with your actual GCP Project ID
         - name: LOCATION
           value: "us-central1" # Replace with your desired Vertex AI location
-        - name: GENERIC_MCP_SERVICE_ADDR
-          value: "generic-mcp-service:8080" # Address of the generic MCP service (HTTP port for requests-based client)
+        - name: MCP_SERVICE_ADDR
+          value: "mcp-service:8080" # Address of the generic MCP service (HTTP port for requests-based client)
         # ADK configuration to use Vertex AI
         - name: GOOGLE_GENAI_USE_VERTEXAI
           value: "TRUE"
