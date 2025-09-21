@@ -107,6 +107,7 @@ func (fe *frontendServer) trackBehavior(ctx context.Context, userID string, even
 
 		// Read and parse the response to check for notifications
 		respBody, err := io.ReadAll(resp.Body)
+		log.WithField("response", string(respBody)).Info("PEAU agent response")
 		if err != nil {
 			log := logrus.WithField("service", "peau-agent")
 			log.WithError(err).Warn("failed to read PEAU agent response")
@@ -123,7 +124,7 @@ func (fe *frontendServer) trackBehavior(ctx context.Context, userID string, even
 		// Check if there's a suggestion in the response
 		if suggestionData, exists := peauResponse["suggestion_data"]; exists && suggestionData != nil {
 			if suggestionMap, ok := suggestionData.(map[string]interface{}); ok {
-				if message, exists := suggestionMap["message"]; exists {
+				if message, exists := suggestionMap["suggestion"]; exists {
 					if messageStr, ok := message.(string); ok && messageStr != "" {
 						// Store the notification
 						fe.notifications.AddNotification(sessionID, userID, messageStr)
@@ -1165,9 +1166,9 @@ func (fe *frontendServer) serveVideoHandler(w http.ResponseWriter, r *http.Reque
 // getNotificationsHandler returns all notifications for the current session
 func (fe *frontendServer) getNotificationsHandler(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Context().Value(ctxKeySessionID{}).(string)
-
+	fmt.Println("sessionID", sessionID)
 	notifications := fe.notifications.GetNotifications(sessionID)
-
+	fmt.Println("notifications", notifications)
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(notifications); err != nil {
 		http.Error(w, "Failed to encode notifications", http.StatusInternalServerError)
