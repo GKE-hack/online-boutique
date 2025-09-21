@@ -197,6 +197,7 @@ class PEAUAgent:
                 # Check if view threshold is met (5+ views)
                 if product_state["views"] >= 5 and not product_state["added_to_cart"]:
                     logger.info(f"User {user_id} viewed product {product_id} {product_state['views']} times - triggering hesitation message")
+                    product_state["views"] = 0 # Reset view counter after triggering hesitation message
                     return self._generate_hesitation_message(user_id, product_id)
                     
             elif event_type == "item_added_to_cart":
@@ -237,7 +238,7 @@ Create a flirty message that includes:
 
 2. Then add the product description and benefits to explain why it's amazing
 
-3. Include the product ID [{product_id}] in the message
+3. Include the product ID in the message in the format [PRODUCT_ID] as a placeholder.
 
 Style: Start flirty and playful, then highlight the product's features from the description
 Use emojis and make it feel like the product has feelings
@@ -254,7 +255,22 @@ Be persuasive but fun. Do not return multiple messages."""
         product_name = product['name']
         product_price = product.get('price', 'N/A')
         categories = product.get("categories", [])
+
+        # Use product_search_tool to get actual recommendations
+        recommended_products_from_tool = []
+        if categories:
+            search_results = product_search_tool(category=categories[0], max_results=3)
+            if search_results.get("status") == "success" and search_results.get("products"):
+                recommended_products_from_tool = [p['id'] for p in search_results["products"] if p['id'] != product_id][:2] # Get 2 unique products
         
+        # If no products from tool, or not enough, use a fallback or an empty list
+        recommendation_placeholders = [f"[{pid}]" for pid in recommended_products_from_tool]
+        if not recommendation_placeholders: # Fallback if no real products found
+            recommendation_text = "other items in this category!"
+        else:
+            recommendation_text = f"{recommendation_placeholders[0]}{f' and {recommendation_placeholders[1]}' if len(recommendation_placeholders) > 1 else ''}!"
+
+
         prompt = f"""A user just added a product to their cart. Create a SHORT, enthusiastic message with product recommendations:
 
 PURCHASED PRODUCT:
@@ -266,12 +282,13 @@ USER ACTION: User added "{product_name}" [{product_id}] to their cart.
 
 Create a SHORT message (2-3 sentences max) that:
 1. Celebrates their choice: "Great choice with the {product_name}! 🎉"
-2. Use the product_search_tool with category parameter to find 2-3 related products from categories: {', '.join(categories)}
-3. Suggest complementary items briefly: "You might also love [PRODUCT_ID] and [PRODUCT_ID]!"
+2. Suggest complementary items briefly: "You might also love {recommendation_text}"
 
 Style: Enthusiastic, brief, emoji-friendly
 Keep the whole message under 25 words
-Focus on product IDs from the search tool results"""
+Focus on product IDs from the search tool results
+Strictly include the product IDs in the format [PRODUCT_ID] as placeholders.
+"""
 
         return self._execute_suggestion_generation(user_id, prompt)
 

@@ -231,9 +231,103 @@
     const chatInput = document.getElementById('chat-input');
     const chatSend = document.getElementById('chat-send');
     const chatMessages = document.getElementById('chat-messages');
-    
+
     let conversationHistory = [];
     let isOpen = false;
+    let sessionId = null;
+
+    // Load state from localStorage
+    function loadChatState() {
+        try {
+            const savedState = localStorage.getItem('chatWidgetState');
+            const savedHistory = localStorage.getItem('chatHistory');
+            const savedSession = localStorage.getItem('chatSessionId');
+
+            if (savedHistory) {
+                conversationHistory = JSON.parse(savedHistory);
+
+                // Restore chat messages from history
+                if (conversationHistory.length > 0) {
+                    // Clear default greeting message
+                    chatMessages.innerHTML = '';
+
+                    // Rebuild conversation UI from history
+                    conversationHistory.forEach(msg => {
+                        if (msg.startsWith('User: ')) {
+                            const userMsg = msg.substring(6);
+                            const messageDiv = document.createElement('div');
+                            messageDiv.className = 'user-message';
+                            messageDiv.innerHTML = `<span>${userMsg}</span>`;
+                            chatMessages.appendChild(messageDiv);
+                        } else if (msg.startsWith('Assistant: ')) {
+                            const botMsg = msg.substring(11);
+                            const messageDiv = document.createElement('div');
+                            messageDiv.className = 'bot-message';
+                            messageDiv.innerHTML = `<span>${parseMarkdown(botMsg)}</span>`;
+                            chatMessages.appendChild(messageDiv);
+                        }
+                    });
+
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+            }
+
+            if (savedSession) {
+                sessionId = savedSession;
+            } else {
+                sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('chatSessionId', sessionId);
+            }
+
+            // Don't auto-open based on saved state to avoid popup issue
+            // User must explicitly click to open
+        } catch (e) {
+            console.error('Failed to load chat state:', e);
+        }
+    }
+
+    // Save state to localStorage
+    function saveChatState() {
+        try {
+            localStorage.setItem('chatWidgetState', JSON.stringify({ isOpen }));
+            localStorage.setItem('chatHistory', JSON.stringify(conversationHistory));
+        } catch (e) {
+            console.error('Failed to save chat state:', e);
+        }
+    }
+
+    // Parse markdown to HTML
+    function parseMarkdown(text) {
+        // Convert product IDs to clickable links first
+        // Pattern: [PRODUCT_ID] becomes a clickable link
+        let html = text.replace(/\[([A-Z0-9]+)\]/g, function(match, productId) {
+            return `<a href="{{ $.baseUrl }}/product/${productId}" style="color: #4285f4; text-decoration: underline;">[${productId}]</a>`;
+        });
+
+        // Basic markdown parsing
+        html = html
+            // Bold
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            // Italic
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            // Code blocks
+            .replace(/```(.*?)```/gs, '<pre><code>$1</code></pre>')
+            // Inline code
+            .replace(/`(.*?)`/g, '<code>$1</code>')
+            // Lists
+            .replace(/^\* (.+)$/gm, '<li>$1</li>')
+            .replace(/^- (.+)$/gm, '<li>$1</li>')
+            .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+            // Line breaks
+            .replace(/\n/g, '<br>');
+
+        // Wrap consecutive list items in ul tags
+        html = html.replace(/(<li>.*?<\/li>(<br>)?)+/g, function(match) {
+            return '<ul>' + match.replace(/<br>/g, '') + '</ul>';
+        });
+
+        return html;
+    }
 
     // Toggle chat window
     function toggleChat() {
@@ -242,19 +336,28 @@
         if (isOpen) {
             chatInput.focus();
         }
+        saveChatState();
     }
 
     // Close chat window
     function closeChat() {
         isOpen = false;
         chatWindow.style.display = 'none';
+        saveChatState();
     }
 
     // Add message to chat
     function addMessage(message, isUser = false) {
         const messageDiv = document.createElement('div');
         messageDiv.className = isUser ? 'user-message' : 'bot-message';
-        messageDiv.innerHTML = `<span>${message}</span>`;
+
+        // Use parseMarkdown for bot messages, plain text for user messages
+        if (isUser) {
+            messageDiv.innerHTML = `<span>${message}</span>`;
+        } else {
+            messageDiv.innerHTML = `<span>${parseMarkdown(message)}</span>`;
+        }
+
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
@@ -277,7 +380,7 @@
         }
     }
 
-    // Send message to chatbot
+    // Send message with streaming support
     async function sendMessage() {
         const message = chatInput.value.trim();
         if (!message) return;
@@ -290,6 +393,106 @@
         // Disable input while processing
         chatInput.disabled = true;
         chatSend.disabled = true;
+
+        // Always use streaming
+        await sendMessageWithStreaming(message);
+
+        // Re-enable input
+        chatInput.disabled = false;
+        chatSend.disabled = false;
+        chatInput.focus();
+    }
+
+    // Streaming message handler
+    async function sendMessageWithStreaming(message) {
+        // Create message container for streaming
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'bot-message';
+        const messageSpan = document.createElement('span');
+        messageSpan.innerHTML = '';
+        messageDiv.appendChild(messageSpan);
+        chatMessages.appendChild(messageDiv);
+
+        let fullResponse = '';
+        let metadata = null;
+
+        try {
+            const response = await fetch('{{ $.baseUrl }}/chat/stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: message,
+                    history: conversationHistory.slice(-10),
+                    session_id: sessionId
+                })
+            });
+
+            if (!response.ok) {
+                // Show error message
+                messageSpan.innerHTML = 'Sorry, I encountered an error. Please try again.';
+                console.error('Streaming endpoint returned error:', response.status);
+                return;
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = line.slice(6);
+                        if (data) {
+                            try {
+                                const parsed = JSON.parse(data);
+                                if (parsed.text) {
+                                    fullResponse += parsed.text;
+                                    messageSpan.innerHTML = parseMarkdown(fullResponse);
+                                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                                } else if (parsed.metadata) {
+                                    metadata = parsed.metadata;
+                                    if (metadata.session_id) {
+                                        sessionId = metadata.session_id;
+                                        localStorage.setItem('chatSessionId', sessionId);
+                                    }
+                                } else if (parsed.done) {
+                                    // Streaming complete
+                                    break;
+                                }
+                            } catch (e) {
+                                console.error('Error parsing SSE data:', e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Save conversation
+            conversationHistory.push('Assistant: ' + fullResponse);
+            saveChatState();
+
+            // Extract and highlight products
+            if (metadata && metadata.recommended_products) {
+                highlightProducts(metadata.recommended_products);
+            }
+
+        } catch (error) {
+            console.error('Streaming error:', error);
+            messageSpan.innerHTML = 'Sorry, I encountered an error. Please try again.';
+        }
+    }
+
+    // Regular non-streaming message handler (fallback)
+    async function sendMessageRegular(message) {
         showTyping();
 
         try {
@@ -300,7 +503,8 @@
                 },
                 body: JSON.stringify({
                     message: message,
-                    history: conversationHistory.slice(-10)
+                    history: conversationHistory.slice(-10),
+                    session_id: sessionId
                 })
             });
 
@@ -315,6 +519,15 @@
             addMessage(data.message);
             conversationHistory.push('Assistant: ' + data.message);
 
+            // Update session ID if provided
+            if (data.session_id) {
+                sessionId = data.session_id;
+                localStorage.setItem('chatSessionId', sessionId);
+            }
+
+            // Save conversation state
+            saveChatState();
+
             // Extract and highlight recommended products
             const productIds = extractProductIds(data.message);
             if (productIds.length > 0) {
@@ -325,11 +538,6 @@
             hideTyping();
             addMessage('Sorry, I encountered an error. Please try again.');
             console.error('Chat error:', error);
-        } finally {
-            // Re-enable input
-            chatInput.disabled = false;
-            chatSend.disabled = false;
-            chatInput.focus();
         }
     }
 
@@ -374,6 +582,9 @@
             closeChat();
         }
     });
+
+    // Initialize chat state on page load
+    loadChatState();
 })();
 </script>
 
