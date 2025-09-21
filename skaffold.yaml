@@ -53,10 +53,10 @@ build:
     context: src/adservice
   - image: tryonservice
     context: src/tryonservice
-  - image: generic_mcp_service
+  - image: mcp_service
     context: .
     docker:
-      dockerfile: src/generic_mcp_service/Dockerfile
+      dockerfile: src/mcp_service/Dockerfile
   - image: peau_agent
     context: src/peau_agent
   - image: video_generation
