@@ -1,40 +1,65 @@
 <!-- <p align="center">
 <img src="/src/frontend/static/icons/Hipster_HeroLogoMaroon.svg" width="300" alt="Online Boutique" />
 </p> -->
-![Continuous Integration](https://github.com/GoogleCloudPlatform/microservices-demo/workflows/Continuous%20Integration%20-%20Main/Release/badge.svg)
+
 
 **Online Boutique** is a cloud-first microservices demo application.  The application is a
 web-based e-commerce app where users can browse items, add them to the cart, and purchase them.
 
 Google uses this application to demonstrate how developers can modernize enterprise applications using Google Cloud products, including: [Google Kubernetes Engine (GKE)](https://cloud.google.com/kubernetes-engine), [Cloud Service Mesh (CSM)](https://cloud.google.com/service-mesh), [gRPC](https://grpc.io/), [Cloud Operations](https://cloud.google.com/products/operations), [Spanner](https://cloud.google.com/spanner), [Memorystore](https://cloud.google.com/memorystore), [AlloyDB](https://cloud.google.com/alloydb), and [Gemini](https://ai.google.dev/). This application works on any Kubernetes cluster.
 
-If you’re using this demo, please **★Star** this repository to show your interest!
-
-**Note to Googlers:** Please fill out the form at [go/microservices-demo](http://go/microservices-demo).
 
 ## Architecture
-
-**Online Boutique** is composed of 11 microservices written in different
-languages that talk to each other over gRPC.
 
 [![Architecture of
 microservices](/docs/img/architecture-diagram.png)](/docs/img/architecture-diagram.png)
 
-Find **Protocol Buffers Descriptions** at the [`./protos` directory](/protos).
 
-| Service                                              | Language      | Description                                                                                                                       |
-| ---------------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| [frontend](/src/frontend)                           | Go            | Exposes an HTTP server to serve the website. Does not require signup/login and generates session IDs for all users automatically. |
-| [cartservice](/src/cartservice)                     | C#            | Stores the items in the user's shopping cart in Redis and retrieves it.                                                           |
-| [productcatalogservice](/src/productcatalogservice) | Go            | Provides the list of products from a JSON file and ability to search products and get individual products.                        |
-| [currencyservice](/src/currencyservice)             | Node.js       | Converts one money amount to another currency. Uses real values fetched from European Central Bank. It's the highest QPS service. |
-| [paymentservice](/src/paymentservice)               | Node.js       | Charges the given credit card info (mock) with the given amount and returns a transaction ID.                                     |
-| [shippingservice](/src/shippingservice)             | Go            | Gives shipping cost estimates based on the shopping cart. Ships items to the given address (mock)                                 |
-| [emailservice](/src/emailservice)                   | Python        | Sends users an order confirmation email (mock).                                                                                   |
-| [checkoutservice](/src/checkoutservice)             | Go            | Retrieves user cart, prepares order and orchestrates the payment, shipping and the email notification.                            |
-| [recommendationservice](/src/recommendationservice) | Python        | Recommends other products based on what's given in the cart.                                                                      |
-| [adservice](/src/adservice)                         | Java          | Provides text ads based on given context words.                                                                                   |
-| [loadgenerator](/src/loadgenerator)                 | Python/Locust | Continuously sends requests imitating realistic user shopping flows to the frontend.                                              |
+## AI Services Added
+
+The Online Boutique has been enhanced with several AI-powered services to improve the customer experience and streamline operations:
+
+### 1. Chatbot Service
+Integrates Google Gemini (2.5 Flash model) with Retrieval Augmented Generation (RAG) capabilities to provide a smart shopping assistant. It answers product-related queries, offers recommendations, and interacts with the Product Catalog Service to fetch real-time product information.
+
+**User Flow:**
+*   **User to Frontend**: A user interacts with the Frontend by sending chat messages.
+*   **Frontend to Chatbot Service**: The Frontend sends these messages (either in a single request or as a stream) to the Chatbot Service via HTTP.
+*   **Chatbot Service Processing**: The Chatbot Server receives the message. It uses the Vertex AI RAG Manager to generate an RAG-enhanced response by querying the Vertex AI RAG Corpus for relevant product information and then feeds that context to the Gemini 2.0 Flash Model. 
+*   **Chatbot Service to Frontend**: The Chatbot Service sends the generated response back to the Frontend.
+*   **Frontend to User**: The Frontend displays the response to the user.
+*   **RAG Corpus Updates**: Separately, `quick_ingest.py` is used for initial population, and `auto_update_rag.py` runs periodically to ensure the Vertex AI RAG Corpus is synchronized with the `products.json` file, thus reflecting the latest product catalog.
+
+### 2. Try-On Service
+Leverages Google Gemini's multimodal capabilities (2.5 Flash Image Preview model aka NanoBanana) to enable virtual product try-on. Users can navigate to the product and can upload a base image (e.g., themselves), and the service generates a realistic image of the product integrated into the base image.
+
+**User Flow:**
+*   **User Initiates Try-On**: The user, interacting with a frontend application, selects a product and uploads a base image (e.g., a photo of themselves).
+*   **Frontend to Try-On Service**: The Frontend sends an HTTP POST request with `multipart/form-data` (base image, product image, category) to the Try-On Service's `/tryon` endpoint.
+*   **Try-On Service to Gemini API**: The Try-On Service converts images and a category-specific prompt, then sends an HTTPS request to the NanoBanana model.
+*   **Try-On Service to Frontend**: The Try-On Service returns the generated image as an HTTP Response with `media_type="image/png"` to the Frontend.
+*   **Frontend to User**: The Frontend displays the virtual try-on image to the user.
+
+### 3. Video Generation Service
+Utilizes Google Gemini (2.5 Flash model) to generate ad scripts and the Veo3 API for video generation. This service creates AI-powered video advertisements for products, fetching product details and images from the Product Catalog Service to produce cinematic, photorealistic advertisements. **It includes RBAC capabilities, restricting video generation to admin users only.**
+
+**User Flow:**
+*   **Admin Browses**: An admin user interacts with the Frontend to discover products for which they want to generate ads using the endpoint("/admin").
+*   **Product Search**: The Frontend queries the Video Generation Service via HTTP/JSON to search/list products.
+*   **Generate Ad Request**: The admin user selects a product, and the Frontend requests video ad generation from the Video Generation Service via HTTP POST/JSON.
+*   **Ad Scripting & Video Synthesis**: The Video Generation Service uses HTTPS to call the Google Gemini API for an ad script, then the Veo3 API (also via HTTPS) to create the video. It fetches product details from the Product Catalog Service via gRPC.
+*   **Status Check**: The Frontend polls the Video Generation Service for video generation status.
+*   **Video Retrieval**: Once complete, the Frontend retrieves the video file from the Video Generation Service.
+*   **Validation**: The admin user can approve/reject the video, and the Frontend sends feedback to the Video Generation Service.
+
+### 4. PEAU (Proactive Engagement & Upselling) Agent
+Tracks user behavior (e.g., product views, items added to cart) to generate proactive, personalized suggestions and recommendations. It uses LlmAgent built using ADK powered by Gemini 2.0 Flash, interacting with the Product Catalog Service to fetch product details and leveraging a MCP server to expose its capabilities to other microservices.
+
+**User Flow:**
+*   **Event Ingestion**: Frontend (or services) send user behavior events (e.g., `product_viewed`, `item_added_to_cart`) to the PEAU Agent.
+*   **Hesitation Case**: If the same product is viewed 5+ (can relax the threshold) times without being added to cart, PEAU generates a short, playful hesitation message as a notification in the frontend urging the user to buy it.
+*   **Add-to-Cart Case**: When a product is added to cart, PEAU searches related products (via MCP tool → Product Catalog) and returns a brief upsell message with 1–2 recommended product IDs in brackets.
+*   **Suggestion Delivery**: Suggestions can be consumed by the user by clicking on the notification bell in the header.
 
 ## Screenshots
 
