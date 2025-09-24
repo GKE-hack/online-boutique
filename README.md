@@ -3,10 +3,13 @@
 </p> -->
 
 
-**Online Boutique** is a cloud-first microservices demo application.  The application is a
-web-based e-commerce app where users can browse items, add them to the cart, and purchase them.
+We built **V-Commerce Studio** (where V stands for virtual) on top of Online Botique repo that enhances customer experience and automates business workflows through:
 
-Google uses this application to demonstrate how developers can modernize enterprise applications using Google Cloud products, including: [Google Kubernetes Engine (GKE)](https://cloud.google.com/kubernetes-engine), [Cloud Service Mesh (CSM)](https://cloud.google.com/service-mesh), [gRPC](https://grpc.io/), [Cloud Operations](https://cloud.google.com/products/operations), [Spanner](https://cloud.google.com/spanner), [Memorystore](https://cloud.google.com/memorystore), [AlloyDB](https://cloud.google.com/alloydb), and [Gemini](https://ai.google.dev/). This application works on any Kubernetes cluster.
+- *RAG-driven chat*, that assists the user by fetching and answering queries from the product catalog.
+- *Proactive engagement* that tracks browsing behavior and nudges users with timely recommendations, to increase ROI.
+- *Virtual try-on* for clothing, footwear, and accessories, letting users see how products would look on them, to have a realistic shopping experience.
+- *Automated ad generation* (admin-only), to create high-quality product video ads ready for review and publishing.
+
 
 
 ## Architecture
@@ -17,7 +20,7 @@ microservices](/docs/img/architecture-diagram.png)](/docs/img/architecture-diagr
 
 ## AI Services Added
 
-The Online Boutique has been enhanced with several AI-powered services to improve the customer experience and streamline operations:
+The Online Boutique has been enhanced with several AI-powered services to improve the customer experience and streamline operations, apart from the existing microservices, we added:
 
 ### 1. Chatbot Service
 Integrates Google Gemini (2.5 Flash model) with Retrieval Augmented Generation (RAG) capabilities to provide a smart shopping assistant. It answers product-related queries, offers recommendations, and interacts with the Product Catalog Service to fetch real-time product information.
@@ -66,4 +69,7 @@ Tracks user behavior (e.g., product views, items added to cart) to generate proa
 | Home Page                                                                                                         | Checkout Screen                                                                                                    |
 | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | [![Screenshot of store homepage](/docs/img/online-boutique-frontend-1.png)](/docs/img/online-boutique-frontend-1.png) | [![Screenshot of checkout screen](/docs/img/online-boutique-frontend-2.png)](/docs/img/online-boutique-frontend-2.png) |
+
+
+Our team's primary achievement lies in the innovative conception and demonstration of a unified, **Google ecosystem** driven orchestration. By relentlessly iterating through a learning-development cycle under tight deadlines, we successfully integrated chat, notifications, virtual try-on, and ad creation. This all-in-one system marks a clear departure from the piecemeal solutions seen elsewhere in the industry. We are grateful to the **Google Cloud team** for providing comprehensive documentation across their services and products, which was immensely helpful to us.
 
