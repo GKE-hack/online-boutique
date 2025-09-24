@@ -15,7 +15,7 @@ We built **V-Commerce Studio** (where V stands for virtual) on top of Online Bot
 ## Architecture
 
 [![Architecture of
-microservices](/docs/img/architecture-diagram.png)](/docs/img/architecture-diagram.png)
+microservices](/docs/img/vcommercestudio_arch_diag.jpg)](/docs/img/vcommercestudio_arch_diag.jpg)
 
 
 ## AI Services Added
@@ -66,9 +66,13 @@ Tracks user behavior (e.g., product views, items added to cart) to generate proa
 
 ## Screenshots
 
-| Home Page                                                                                                         | Checkout Screen                                                                                                    |
-| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| [![Screenshot of store homepage](/docs/img/online-boutique-frontend-1.png)](/docs/img/online-boutique-frontend-1.png) | [![Screenshot of checkout screen](/docs/img/online-boutique-frontend-2.png)](/docs/img/online-boutique-frontend-2.png) |
+
+[![Screenshot of Ad Generation](/docs/img/adgen.png)](/docs/img/adgen.png)
+[![Screenshot of Chatbot](/docs/img/chatbot.png)](/docs/img/chatbot.png)
+[![Screenshot of Try-On](/docs/img/tryon.png)](/docs/img/tryon.png)
+[![Screenshot of PEAU](/docs/img/PEAU.png)](/docs/img/PEAU.png)
+[![Screenshot of RBAC](/docs/img/RBAC.png)](/docs/img/RBAC.png)
+
 
 
 Our team's primary achievement lies in the innovative conception and demonstration of a unified, **Google ecosystem** driven orchestration. By relentlessly iterating through a learning-development cycle under tight deadlines, we successfully integrated chat, notifications, virtual try-on, and ad creation. This all-in-one system marks a clear departure from the piecemeal solutions seen elsewhere in the industry. We are grateful to the **Google Cloud team** for providing comprehensive documentation across their services and products, which was immensely helpful to us.
